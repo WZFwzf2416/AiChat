@@ -1,0 +1,109 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SYSTEM
+  USER
+  ASSISTANT
+  TOOL
+}
+
+enum ProviderType {
+  OPENAI
+  MOCK
+}
+
+enum AgentStepStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id        String        @id @default(cuid())
+  email     String?       @unique
+  name      String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  sessions  ChatSession[]
+}
+
+model ModelConfig {
+  id              String         @id @default(cuid())
+  provider        ProviderType
+  name            String
+  modelId         String
+  isDefault       Boolean        @default(false)
+  temperature     Float          @default(0.7)
+  maxOutputTokens Int            @default(1200)
+  systemPrompt    String         @default("")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  sessions        ChatSession[]
+
+  @@index([provider, modelId])
+}
+
+model ChatSession {
+  id              String        @id @default(cuid())
+  title           String
+  userId          String?
+  user            User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  modelConfigId   String?
+  modelConfig     ModelConfig?  @relation(fields: [modelConfigId], references: [id], onDelete: SetNull)
+  modelProvider   ProviderType  @default(OPENAI)
+  modelId         String        @default("gpt-4.1-mini")
+  temperature     Float         @default(0.7)
+  maxOutputTokens Int           @default(1200)
+  systemPrompt    String        @default("")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  messages        Message[]
+  agentSteps      AgentStep[]
+
+  @@index([updatedAt])
+}
+
+model Message {
+  id          String      @id @default(cuid())
+  sessionId   String
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role        Role
+  content     String
+  toolCallId  String?
+  toolName    String?
+  toolCalls   Json?
+  toolResults Json?
+  metadata    Json?
+  createdAt   DateTime    @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model AgentStep {
+  id        String          @id @default(cuid())
+  sessionId String
+  session   ChatSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  status    AgentStepStatus
+  kind      String
+  label     String
+  payload   Json?
+  createdAt DateTime        @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model KnowledgeEntry {
+  id        String   @id @default(cuid())
+  title     String
+  content   String
+  tags      String[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
