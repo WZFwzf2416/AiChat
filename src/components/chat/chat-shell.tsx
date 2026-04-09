@@ -23,9 +23,12 @@ export function ChatShell() {
     isBootstrapping,
     isNearBottom,
     isSending,
+    isSavingKnowledgeEntry,
+    knowledgeEntries,
     messageEndRef,
     messageViewportRef,
     modelConfigs,
+    createKnowledgeEntry,
     persistSystemPrompt,
     reloadWorkspace,
     retryLastMessage,
@@ -184,6 +187,9 @@ export function ChatShell() {
               <ChatInspectorPanel
                 activeSession={activeSession}
                 diagnostics={diagnostics}
+                knowledgeEntries={knowledgeEntries}
+                isSavingKnowledgeEntry={isSavingKnowledgeEntry}
+                onCreateKnowledgeEntry={(input) => createKnowledgeEntry(input)}
                 onSystemPromptChange={updateDraftSystemPrompt}
                 onSystemPromptBlur={(value) => {
                   void persistSystemPrompt(value).catch((reason: unknown) =>

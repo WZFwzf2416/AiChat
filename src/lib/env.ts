@@ -34,7 +34,8 @@ export const appEnv = envSchema.parse({
 export const hasOpenAIKey = Boolean(appEnv.OPENAI_API_KEY);
 export const hasQwenKey = Boolean(appEnv.QWEN_API_KEY);
 export const hasCompatibleApiKey = hasOpenAIKey || hasQwenKey;
-export const allowDemoProvider = appEnv.ALLOW_DEMO_PROVIDER;
+export const isDevelopment = process.env.NODE_ENV !== "production";
+export const allowDemoProvider = isDevelopment && appEnv.ALLOW_DEMO_PROVIDER;
 export const preferredCompatibleBackend: "qwen" | "openai" | null = hasQwenKey
   ? "qwen"
   : hasOpenAIKey

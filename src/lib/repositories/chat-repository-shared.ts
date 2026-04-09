@@ -1,4 +1,4 @@
-import { hasCompatibleApiKey, preferredCompatibleBackend } from "@/lib/env";
+import { hasCompatibleApiKey, isDevelopment, preferredCompatibleBackend } from "@/lib/env";
 import {
   DEFAULT_SYSTEM_PROMPT,
   getAvailableModelConfigs,
@@ -10,6 +10,7 @@ import type {
   AgentStep,
   ChatMessage,
   ChatSession,
+  KnowledgeEntry,
   ModelConfig,
   ToolCallRecord,
   ToolResultRecord,
@@ -40,7 +41,7 @@ export type KnowledgeEntrySeed = {
 export type RepositoryStore = {
   sessions: ChatSession[];
   modelConfigs: ModelConfig[];
-  knowledgeEntries: KnowledgeEntrySeed[];
+  knowledgeEntries: KnowledgeEntry[];
 };
 
 declare global {
@@ -59,20 +60,29 @@ export const KNOWLEDGE_SEED: KnowledgeEntrySeed[] = [
     tags: ["架构", "聊天", "agent"],
   },
   {
-    id: "kb-context",
+    id: "kb-context-window",
     title: "上下文窗口策略",
     content:
       "优先保留最近的用户与助手对话，保留会影响答案的工具输出，只有在会话长度明显影响成本或延迟时再引入摘要。",
     tags: ["上下文", "记忆", "tokens"],
   },
   {
-    id: "kb-frontend",
+    id: "kb-frontend-learning",
     title: "前端开发者学习路线",
     content:
       "前端工程师学习 AI 产品开发最快的方式，是先做真实界面，再逐步补上模型编排、提示词组合、工具调用和可观测性。",
     tags: ["学习", "前端", "路线图"],
   },
 ];
+
+function createKnowledgeEntryRecord(entry: KnowledgeEntrySeed): KnowledgeEntry {
+  const now = new Date().toISOString();
+  return {
+    ...entry,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
 export function createStarterSession(
   modelConfig = getDefaultModelConfig(
@@ -112,7 +122,7 @@ export function getMemoryStore(): RepositoryStore {
     globalThis.memoryChatStore = {
       sessions: [createStarterSession()],
       modelConfigs: [...modelConfigs],
-      knowledgeEntries: [...KNOWLEDGE_SEED],
+      knowledgeEntries: KNOWLEDGE_SEED.map(createKnowledgeEntryRecord),
     };
   }
 
@@ -186,6 +196,24 @@ export function normalizeAgentStep(record: {
   };
 }
 
+export function normalizeKnowledgeEntry(record: {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}): KnowledgeEntry {
+  return {
+    id: record.id,
+    title: record.title,
+    content: record.content,
+    tags: record.tags,
+    createdAt: new Date(record.createdAt).toISOString(),
+    updatedAt: new Date(record.updatedAt).toISOString(),
+  };
+}
+
 export function createRuntimeStatus(storageMode: "prisma" | "memory") {
   return {
     storageMode,
@@ -194,7 +222,9 @@ export function createRuntimeStatus(storageMode: "prisma" | "memory") {
     experienceMode: hasCompatibleApiKey ? ("real" as const) : ("demo" as const),
     demoModeReason: hasCompatibleApiKey
       ? null
-      : "当前处于演示模式：没有配置真实模型 API Key，最终生成文本将由演示模型返回。",
+      : isDevelopment
+        ? "当前处于开发演示模式：尚未配置真实模型 API Key，最终生成文本将由演示模型返回。"
+        : "当前环境未配置可用的真实模型 API Key。",
   };
 }
 
@@ -248,6 +278,6 @@ export function rankKnowledgeEntries<
     .map((entry) => ({ entry, score: scoreEntry(entry) }))
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score)
-    .slice(0, 4)
+    .slice(0, 6)
     .map((item) => item.entry);
 }

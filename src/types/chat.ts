@@ -61,6 +61,21 @@ export interface ChatSession {
   agentSteps: AgentStep[];
 }
 
+export interface KnowledgeEntry {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeEntryInput {
+  title: string;
+  content: string;
+  tags: string[];
+}
+
 export interface RuntimeStatus {
   storageMode: "prisma" | "memory";
   compatibleApiConfigured: boolean;
@@ -73,6 +88,7 @@ export interface ChatBootstrapPayload {
   sessions: ChatSession[];
   modelConfigs: ModelConfig[];
   runtime: RuntimeStatus;
+  knowledgeEntries: KnowledgeEntry[];
 }
 
 export interface SessionSettingsPatch {

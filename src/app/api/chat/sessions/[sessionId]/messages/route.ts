@@ -4,7 +4,7 @@ import { createApiErrorResponse } from "@/app/api/chat/route-utils";
 import { handleChatTurn } from "@/lib/chat-service";
 
 const messageSchema = z.object({
-  content: z.string().trim().min(1).max(6000),
+  content: z.string().trim().min(1).max(12000),
 });
 
 export async function POST(

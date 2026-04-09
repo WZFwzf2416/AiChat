@@ -1,14 +1,15 @@
 import OpenAI from "openai";
 
-import { runToolByName } from "@/lib/ai/tools";
+import { getOpenAITools, runToolByName } from "@/lib/ai/tools";
 import {
-  appEnv,
   allowDemoProvider,
+  appEnv,
   hasCompatibleApiKey,
   hasOpenAIKey,
   hasQwenKey,
+  isDevelopment,
 } from "@/lib/env";
-import { chunkText, createId } from "@/lib/utils";
+import { chunkText, createId, safeJsonParse } from "@/lib/utils";
 import type {
   AgentStep,
   AppModelProvider,
@@ -77,6 +78,22 @@ type DirectToolIntent = {
   args: Record<string, unknown>;
   preamble: string;
   label: string;
+};
+
+type CompatibleTarget =
+  | {
+      label: "QWEN" | "OPENAI";
+      apiKey: string;
+      baseURL?: string;
+    }
+  | { error: string };
+
+type PreparedToolContext = {
+  initialStage: "thinking" | "tooling";
+  messages: Array<Record<string, unknown>>;
+  persistedMessages: PersistedTurnMessage[];
+  agentSteps: AgentStep[];
+  preludeEvents: ProviderStreamEvent[];
 };
 
 function buildOpenAIMessages(systemPrompt: string, messages: ChatMessage[]) {
@@ -155,12 +172,11 @@ function isQwenModel(modelId: string) {
   return modelId.toLowerCase().startsWith("qwen");
 }
 
-function resolveCompatibleClient(modelId: string) {
+function resolveCompatibleClient(modelId: string): CompatibleTarget {
   if (isQwenModel(modelId)) {
     if (!hasQwenKey) {
       return {
-        error:
-          "当前会话选择的是通义千问模型，但没有配置 `QWEN_API_KEY`。",
+        error: "当前会话选择的是通义千问模型，但没有配置 `QWEN_API_KEY`。",
       };
     }
 
@@ -173,8 +189,7 @@ function resolveCompatibleClient(modelId: string) {
 
   if (!hasOpenAIKey) {
     return {
-      error:
-        "当前会话选择的是 OpenAI 模型，但没有配置 `OPENAI_API_KEY`。",
+      error: "当前会话选择的是 OpenAI 模型，但没有配置 `OPENAI_API_KEY`。",
     };
   }
 
@@ -187,9 +202,28 @@ function resolveCompatibleClient(modelId: string) {
 
 function normalizeIntentText(value: string) {
   return value
-    .replace(/[，。！？；：、“”‘’"'（）()]/g, " ")
+    .replace(/[，。！？；：、“”‘’'（）()]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function looksLikeToolRequest(content: string) {
+  const normalized = normalizeIntentText(content);
+  const lower = content.toLowerCase();
+
+  return (
+    normalized.includes("知识库") ||
+    normalized.includes("文档") ||
+    normalized.includes("资料") ||
+    normalized.includes("时间") ||
+    normalized.includes("几点") ||
+    normalized.includes("天气") ||
+    normalized.includes("气温") ||
+    normalized.includes("下雨") ||
+    lower.includes("knowledge") ||
+    lower.includes("time") ||
+    lower.includes("weather")
+  );
 }
 
 function extractWeatherCity(content: string) {
@@ -312,6 +346,251 @@ function inferDirectToolIntent(messages: ChatMessage[]): DirectToolIntent | null
   return null;
 }
 
+function createBufferedTextStream(text: string) {
+  const encoder = new TextEncoder();
+  const chunks = chunkText(text, 8);
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      for (const [index, chunk] of chunks.entries()) {
+        controller.enqueue(encoder.encode(chunk));
+        if (index < chunks.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+      controller.close();
+    },
+  });
+}
+
+async function executeToolIntent(params: {
+  input: GenerateTurnInput;
+  startedAt: number;
+  messages: Array<Record<string, unknown>>;
+  persistedMessages?: PersistedTurnMessage[];
+  agentSteps?: AgentStep[];
+  preludeEvents?: ProviderStreamEvent[];
+  intent: DirectToolIntent;
+  metadataExtras?: Record<string, unknown>;
+}) {
+  const {
+    input,
+    startedAt,
+    messages,
+    intent,
+    persistedMessages = [],
+    agentSteps = [],
+    preludeEvents = [],
+    metadataExtras,
+  } = params;
+  const toolCallId = createId("tool");
+  const execution = await runToolByName(intent.toolName, intent.args, toolCallId);
+
+  persistedMessages.push({
+    role: "assistant",
+    content: intent.preamble,
+    toolCalls: [
+      {
+        id: toolCallId,
+        name: intent.toolName,
+        arguments: intent.args,
+      },
+    ],
+    metadata: {
+      hidden: true,
+      ...metadataExtras,
+      ...buildBaseMetadata(input, Date.now() - startedAt),
+    },
+  });
+  persistedMessages.push(execution.toolMessage);
+  agentSteps.push(execution.agentStep);
+
+  preludeEvents.push({
+    type: "tool",
+    phase: "start",
+    toolName: intent.toolName,
+    label: intent.label,
+  });
+  preludeEvents.push({
+    type: "tool",
+    phase: "result",
+    toolName: intent.toolName,
+    label: execution.agentStep.label,
+    summary: execution.toolMessage.content,
+  });
+
+  messages.push({
+    role: "assistant",
+    tool_calls: [
+      {
+        id: toolCallId,
+        type: "function",
+        function: {
+          name: intent.toolName,
+          arguments: JSON.stringify(intent.args),
+        },
+      },
+    ],
+  });
+  messages.push({
+    role: "tool",
+    tool_call_id: toolCallId,
+    content: execution.toolMessage.content,
+  });
+
+  return { messages, persistedMessages, agentSteps, preludeEvents };
+}
+
+function parseToolArguments(raw: string) {
+  const parsed = safeJsonParse<Record<string, unknown> | null>(raw, null);
+  return parsed ?? {};
+}
+
+async function prepareToolContext(params: {
+  client: OpenAI;
+  input: GenerateTurnInput;
+  startedAt: number;
+  messages: Array<Record<string, unknown>>;
+}): Promise<PreparedToolContext> {
+  const { client, input, startedAt } = params;
+  const messages = [...params.messages];
+  const persistedMessages: PersistedTurnMessage[] = [];
+  const agentSteps: AgentStep[] = [];
+  const preludeEvents: ProviderStreamEvent[] = [];
+  const latestUserMessage = [...input.messages]
+    .reverse()
+    .find((message) => message.role === "user");
+  const latestUserContent = latestUserMessage?.content ?? "";
+  const shouldFallbackToHeuristic = looksLikeToolRequest(latestUserContent);
+
+  const planning = await client.chat.completions.create({
+    model: input.modelId,
+    temperature: input.temperature,
+    max_completion_tokens: Math.min(600, input.maxOutputTokens),
+    messages: messages as never,
+    tools: getOpenAITools() as never,
+    tool_choice: "auto",
+  });
+
+  const assistantMessage = planning.choices[0]?.message;
+  const rawToolCalls =
+    assistantMessage?.tool_calls?.filter((toolCall) => toolCall.type === "function") ?? [];
+
+  if (rawToolCalls.length > 0) {
+    const serializedCalls: ToolCallRecord[] = rawToolCalls.map((toolCall) => ({
+      id: toolCall.id,
+      name: toolCall.function.name,
+      arguments: parseToolArguments(toolCall.function.arguments),
+    }));
+
+    persistedMessages.push({
+      role: "assistant",
+      content:
+        extractAssistantText(assistantMessage?.content).trim() ||
+        "模型决定先调用工具完成这一轮请求。",
+      toolCalls: serializedCalls,
+      metadata: {
+        hidden: true,
+        modelToolCall: true,
+        planningUsage: planning.usage ?? null,
+        ...buildBaseMetadata(input, Date.now() - startedAt),
+      },
+    });
+
+    messages.push({
+      role: "assistant",
+      tool_calls: rawToolCalls.map((toolCall) => ({
+        id: toolCall.id,
+        type: "function",
+        function: {
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+        },
+      })),
+    });
+
+    for (const toolCall of serializedCalls) {
+      const execution = await runToolByName(
+        toolCall.name,
+        toolCall.arguments,
+        toolCall.id,
+      );
+      persistedMessages.push(execution.toolMessage);
+      agentSteps.push(execution.agentStep);
+      preludeEvents.push({
+        type: "tool",
+        phase: "start",
+        toolName: toolCall.name,
+        label: `模型调用工具：${toolCall.name}`,
+      });
+      preludeEvents.push({
+        type: "tool",
+        phase: "result",
+        toolName: toolCall.name,
+        label: execution.agentStep.label,
+        summary: execution.toolMessage.content,
+      });
+      messages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: execution.toolMessage.content,
+      });
+    }
+
+    return {
+      initialStage: "tooling",
+      messages,
+      persistedMessages,
+      agentSteps,
+      preludeEvents,
+    };
+  }
+
+  if (!shouldFallbackToHeuristic) {
+    return {
+      initialStage: "thinking",
+      messages,
+      persistedMessages,
+      agentSteps,
+      preludeEvents,
+    };
+  }
+
+  const fallbackIntent = inferDirectToolIntent(input.messages);
+  if (!fallbackIntent) {
+    return {
+      initialStage: "thinking",
+      messages,
+      persistedMessages,
+      agentSteps,
+      preludeEvents,
+    };
+  }
+
+  await executeToolIntent({
+    input,
+    startedAt,
+    messages,
+    persistedMessages,
+    agentSteps,
+    preludeEvents,
+    intent: fallbackIntent,
+    metadataExtras: {
+      directToolIntent: true,
+      fallbackReason: "model-did-not-emit-tool-call",
+      planningUsage: planning.usage ?? null,
+    },
+  });
+
+  return {
+    initialStage: "tooling",
+    messages,
+    persistedMessages,
+    agentSteps,
+    preludeEvents,
+  };
+}
+
 async function streamAssistantCompletion(params: {
   client: OpenAI;
   targetLabel: string;
@@ -426,105 +705,28 @@ async function generateWithCompatibleProvider(
     baseURL: target.baseURL,
   });
 
-  const openAIMessages = buildOpenAIMessages(input.systemPrompt, input.messages);
-  const persistedMessages: PersistedTurnMessage[] = [];
-  const agentSteps: AgentStep[] = [];
-  const preludeEvents: ProviderStreamEvent[] = [];
-
-  const directToolIntent = inferDirectToolIntent(input.messages);
-  if (directToolIntent) {
-    const toolCallId = createId("tool");
-    const execution = await runToolByName(
-      directToolIntent.toolName,
-      directToolIntent.args,
-      toolCallId,
-    );
-
-    persistedMessages.push({
-      role: "assistant",
-      content: directToolIntent.preamble,
-      toolCalls: [
-        {
-          id: toolCallId,
-          name: directToolIntent.toolName,
-          arguments: directToolIntent.args,
-        },
-      ],
-      metadata: {
-        hidden: true,
-        directToolIntent: true,
-        ...buildBaseMetadata(input, Date.now() - startedAt),
-      },
-    });
-    persistedMessages.push(execution.toolMessage);
-    agentSteps.push(execution.agentStep);
-
-    preludeEvents.push({
-      type: "tool",
-      phase: "start",
-      toolName: directToolIntent.toolName,
-      label: directToolIntent.label,
-    });
-    preludeEvents.push({
-      type: "tool",
-      phase: "result",
-      toolName: directToolIntent.toolName,
-      label: execution.agentStep.label,
-      summary: execution.toolMessage.content,
-    });
-
-    openAIMessages.push({
-      role: "assistant",
-      tool_calls: [
-        {
-          id: toolCallId,
-          type: "function",
-          function: {
-            name: directToolIntent.toolName,
-            arguments: JSON.stringify(directToolIntent.args),
-          },
-        },
-      ],
-    });
-    openAIMessages.push({
-      role: "tool",
-      tool_call_id: toolCallId,
-      content: execution.toolMessage.content,
-    });
-  }
+  const prepared = await prepareToolContext({
+    client,
+    input,
+    startedAt,
+    messages: buildOpenAIMessages(input.systemPrompt, input.messages),
+  });
 
   const streamed = await streamAssistantCompletion({
     client,
     targetLabel: target.label,
     input,
     startedAt,
-    messages: openAIMessages,
-    persistedMessages,
-    agentSteps,
+    messages: prepared.messages,
+    persistedMessages: prepared.persistedMessages,
+    agentSteps: prepared.agentSteps,
   });
 
   return {
     ...streamed,
-    initialStage: directToolIntent ? "tooling" : "thinking",
-    preludeEvents,
+    initialStage: prepared.initialStage,
+    preludeEvents: prepared.preludeEvents,
   };
-}
-
-function createBufferedTextStream(text: string) {
-  const encoder = new TextEncoder();
-  const chunks = chunkText(text, 8);
-
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      for (const [index, chunk] of chunks.entries()) {
-        controller.enqueue(encoder.encode(chunk));
-        if (index < chunks.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-      }
-      controller.close();
-    },
-  });
 }
 
 async function generateWithMockProvider(
@@ -535,17 +737,20 @@ async function generateWithMockProvider(
   const directToolIntent = inferDirectToolIntent(input.messages);
 
   if (directToolIntent) {
-    const toolCallId = createId("tool");
-    const execution = await runToolByName(
-      directToolIntent.toolName,
-      directToolIntent.args,
-      toolCallId,
-    );
+    const executionContext = await executeToolIntent({
+      input,
+      startedAt: Date.now(),
+      messages: [],
+      intent: directToolIntent,
+      metadataExtras: { directToolIntent: true, providerMode: "mock" },
+    });
     const assistantText = [
       `当前处于演示模式，但工具仍然执行了真实请求：${directToolIntent.toolName}。`,
       "下面是基于真实工具结果整理出的说明：",
-      execution.toolMessage.content,
-    ].join("\n");
+      executionContext.persistedMessages.at(-1)?.content ?? "",
+    ]
+      .filter(Boolean)
+      .join("\n");
     const metadata = {
       ...baseMetadata,
       provider: "MOCK",
@@ -555,32 +760,18 @@ async function generateWithMockProvider(
     return {
       stream: createBufferedTextStream(assistantText),
       initialStage: "tooling",
-      preludeEvents: [
-        {
-          type: "tool",
-          phase: "start",
-          toolName: directToolIntent.toolName,
-          label: directToolIntent.label,
-        },
-        {
-          type: "tool",
-          phase: "result",
-          toolName: directToolIntent.toolName,
-          label: execution.agentStep.label,
-          summary: execution.toolMessage.content,
-        },
-      ],
+      preludeEvents: executionContext.preludeEvents,
       completion: Promise.resolve({
         assistantText,
         persistedMessages: [
-          execution.toolMessage,
+          ...executionContext.persistedMessages,
           {
             role: "assistant",
             content: assistantText,
             metadata,
           },
         ],
-        agentSteps: [execution.agentStep],
+        agentSteps: executionContext.agentSteps,
         metadata,
       }),
     };
@@ -622,7 +813,7 @@ async function generateWithMockProvider(
 
 export async function generateAssistantTurn(input: GenerateTurnInput) {
   if (input.modelProvider === "MOCK") {
-    if (!allowDemoProvider && hasCompatibleApiKey) {
+    if (!isDevelopment || (!allowDemoProvider && hasCompatibleApiKey)) {
       throw new Error(
         "当前已处于真实联调模式，演示模型已禁用，请切换到真实模型预设。",
       );

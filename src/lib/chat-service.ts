@@ -1,14 +1,16 @@
 import { generateAssistantTurn } from "@/lib/ai/providers";
 import {
+  createKnowledgeEntry,
   createSession,
   getChatBootstrap,
   getSession,
+  listKnowledgeEntries,
   saveAssistantTurn,
   saveUserMessage,
   updateSessionSettings,
 } from "@/lib/repositories/chat-repository";
 import { buildContextWindow } from "@/lib/utils";
-import type { SessionSettingsPatch } from "@/types/chat";
+import type { KnowledgeEntryInput, SessionSettingsPatch } from "@/types/chat";
 
 export async function getBootstrapData() {
   return getChatBootstrap();
@@ -27,6 +29,14 @@ export async function patchChatSession(
   patch: SessionSettingsPatch,
 ) {
   return updateSessionSettings(sessionId, patch);
+}
+
+export async function getKnowledgeEntries() {
+  return listKnowledgeEntries();
+}
+
+export async function addKnowledgeEntry(input: KnowledgeEntryInput) {
+  return createKnowledgeEntry(input);
 }
 
 export async function handleChatTurn(sessionId: string, content: string) {

@@ -23,6 +23,7 @@ import type {
   ChatBootstrapPayload,
   ChatMessage,
   ChatSession,
+  KnowledgeEntryInput,
   ModelConfig,
 } from "@/types/chat";
 
@@ -39,12 +40,18 @@ type WorkspaceError = {
 const initialComposer: ComposerState = { content: "" };
 
 export function formatTimestamp(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "时间未知";
+  }
+
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
     month: "short",
     day: "numeric",
-  }).format(new Date(value));
+  }).format(date);
 }
 
 export function useChatWorkspace() {
@@ -64,6 +71,7 @@ export function useChatWorkspace() {
   const [lastFailedUserContent, setLastFailedUserContent] = useState<string | null>(
     null,
   );
+  const [isSavingKnowledgeEntry, setIsSavingKnowledgeEntry] = useState(false);
   const messageViewportRef = useRef<HTMLDivElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -188,6 +196,7 @@ export function useChatWorkspace() {
   const deferredSessionId = useDeferredValue(activeSessionId);
   const runtime = bootstrap?.runtime ?? null;
   const modelConfigs = bootstrap?.modelConfigs ?? [];
+  const knowledgeEntries = bootstrap?.knowledgeEntries ?? [];
 
   const filteredSessions = (bootstrap?.sessions ?? []).filter((session) => {
     const keyword = sessionFilter.trim().toLowerCase();
@@ -493,6 +502,45 @@ export function useChatWorkspace() {
     await syncBootstrap();
   }
 
+  async function createKnowledgeEntry(input: KnowledgeEntryInput) {
+    setIsSavingKnowledgeEntry(true);
+    clearError();
+
+    try {
+      const response = await fetch("/api/chat/knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "新增知识条目失败。");
+      }
+
+      startTransition(() => {
+        setBootstrap((current) =>
+          current
+            ? {
+                ...current,
+                knowledgeEntries: [payload, ...current.knowledgeEntries],
+              }
+            : current,
+        );
+      });
+    } catch (reason: unknown) {
+      setWorkspaceError(
+        reason instanceof Error ? reason.message : "新增知识条目失败。",
+        {
+          canReload: false,
+        },
+      );
+      throw reason;
+    } finally {
+      setIsSavingKnowledgeEntry(false);
+    }
+  }
+
   async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await sendUserContent(composer.content.trim());
@@ -577,9 +625,12 @@ export function useChatWorkspace() {
     isBootstrapping,
     isNearBottom,
     isSending,
+    isSavingKnowledgeEntry,
+    knowledgeEntries,
     messageEndRef,
     messageViewportRef,
     modelConfigs,
+    createKnowledgeEntry,
     persistSystemPrompt,
     reloadWorkspace,
     retryLastMessage,

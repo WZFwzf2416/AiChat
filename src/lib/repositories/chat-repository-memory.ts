@@ -7,6 +7,8 @@ import { createId, summarizeTitle } from "@/lib/utils";
 import type {
   ChatBootstrapPayload,
   ChatSession,
+  KnowledgeEntry,
+  KnowledgeEntryInput,
   ModelConfig,
   SessionSettingsPatch,
 } from "@/types/chat";
@@ -14,6 +16,7 @@ import {
   createRuntimeStatus,
   getMemoryStore,
   NEW_SESSION_TITLE,
+  normalizeKnowledgeEntry,
   rankKnowledgeEntries,
   type PersistedAssistantTurn,
 } from "@/lib/repositories/chat-repository-shared";
@@ -25,6 +28,7 @@ export function getMemoryBootstrap(): ChatBootstrapPayload {
     sessions: store.sessions,
     modelConfigs: store.modelConfigs,
     runtime: createRuntimeStatus("memory"),
+    knowledgeEntries: store.knowledgeEntries,
   };
 }
 
@@ -147,4 +151,26 @@ export function saveMemoryAssistantTurn(
 
 export function searchMemoryKnowledgeBase(query: string) {
   return rankKnowledgeEntries(getMemoryStore().knowledgeEntries, query);
+}
+
+export function listMemoryKnowledgeEntries() {
+  return [...getMemoryStore().knowledgeEntries].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
+}
+
+export function createMemoryKnowledgeEntry(input: KnowledgeEntryInput): KnowledgeEntry {
+  const entry = normalizeKnowledgeEntry({
+    id: createId("kb"),
+    title: input.title.trim(),
+    content: input.content.trim(),
+    tags: input.tags,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  const store = getMemoryStore();
+  store.knowledgeEntries.unshift(entry);
+
+  return entry;
 }

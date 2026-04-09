@@ -6,6 +6,8 @@ import { summarizeTitle } from "@/lib/utils";
 import type {
   ChatBootstrapPayload,
   ChatSession,
+  KnowledgeEntry,
+  KnowledgeEntryInput,
   ModelConfig,
   SessionSettingsPatch,
 } from "@/types/chat";
@@ -13,6 +15,7 @@ import {
   createRuntimeStatus,
   KNOWLEDGE_SEED,
   normalizeAgentStep,
+  normalizeKnowledgeEntry,
   normalizeMessage,
   rankKnowledgeEntries,
   STARTER_TITLE,
@@ -109,17 +112,24 @@ export async function getPrismaBootstrap(): Promise<ChatBootstrapPayload> {
 
   await ensureDatabaseSeed();
 
-  const { getAvailableModelConfigs, getDefaultModelConfig, getSuggestedSessionProvider } =
-    await import("@/lib/models");
+  const {
+    getAvailableModelConfigs,
+    getDefaultModelConfig,
+    getSuggestedSessionProvider,
+  } = await import("@/lib/models");
   const runtime = createRuntimeStatus("prisma");
   const desiredConfigIds = getAvailableModelConfigs().map((config) => config.id);
 
-  const [modelConfigs, sessionsCount] = await Promise.all([
+  const [modelConfigs, sessionsCount, knowledgeEntries] = await Promise.all([
     prisma.modelConfig.findMany({
       where: { id: { in: desiredConfigIds } },
       orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
     }),
     prisma.chatSession.count(),
+    prisma.knowledgeEntry.findMany({
+      orderBy: { updatedAt: "desc" },
+      take: 12,
+    }),
   ]);
 
   if (sessionsCount === 0) {
@@ -180,6 +190,7 @@ export async function getPrismaBootstrap(): Promise<ChatBootstrapPayload> {
       systemPrompt: config.systemPrompt,
     })),
     runtime,
+    knowledgeEntries: knowledgeEntries.map(normalizeKnowledgeEntry),
   };
 }
 
@@ -344,8 +355,39 @@ export async function searchPrismaKnowledgeBase(query: string) {
 
   const entries = await prisma.knowledgeEntry.findMany({
     orderBy: { updatedAt: "desc" },
-    take: 20,
+    take: 50,
   });
 
   return rankKnowledgeEntries(entries, query);
+}
+
+export async function listPrismaKnowledgeEntries() {
+  if (!prisma) {
+    throw new Error("Prisma client 不可用。");
+  }
+
+  const entries = await prisma.knowledgeEntry.findMany({
+    orderBy: { updatedAt: "desc" },
+    take: 20,
+  });
+
+  return entries.map(normalizeKnowledgeEntry);
+}
+
+export async function createPrismaKnowledgeEntry(
+  input: KnowledgeEntryInput,
+): Promise<KnowledgeEntry> {
+  if (!prisma) {
+    throw new Error("Prisma client 不可用。");
+  }
+
+  const entry = await prisma.knowledgeEntry.create({
+    data: {
+      title: input.title.trim(),
+      content: input.content.trim(),
+      tags: input.tags,
+    },
+  });
+
+  return normalizeKnowledgeEntry(entry);
 }

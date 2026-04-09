@@ -4,6 +4,7 @@ import {
   hasCompatibleApiKey,
   hasOpenAIKey,
   hasQwenKey,
+  isDevelopment,
   preferredCompatibleBackend,
 } from "@/lib/env";
 import type { AppModelProvider, ModelConfig } from "@/types/chat";
@@ -11,7 +12,7 @@ import type { AppModelProvider, ModelConfig } from "@/types/chat";
 export const DEFAULT_SYSTEM_PROMPT = [
   "你是一名帮助前端开发者学习并搭建 AI 产品的工程搭档。",
   "回答时要兼顾工程可落地性、清晰解释和下一步建议。",
-  "当需要使用工具时，先说明你的计划，再基于工具结果继续回答。",
+  "当你使用工具时，请基于工具结果继续回答，并清楚区分哪些内容来自工具、哪些内容来自模型整理。",
 ].join(" ");
 
 function buildQwenModelConfigs(): ModelConfig[] {
@@ -80,7 +81,7 @@ function buildOpenAIModelConfigs(): ModelConfig[] {
 }
 
 function shouldIncludeDemoProvider() {
-  return !hasCompatibleApiKey || allowDemoProvider;
+  return isDevelopment && (!hasCompatibleApiKey || allowDemoProvider);
 }
 
 export function getAvailableModelConfigs(): ModelConfig[] {
@@ -98,7 +99,7 @@ export function getAvailableModelConfigs(): ModelConfig[] {
     modelConfigs.push({
       id: "mock-learning-lab",
       provider: "MOCK",
-      name: "学习实验室模拟器",
+      name: "开发演示模型",
       modelId: "mock-learning-lab",
       isDefault: !hasCompatibleApiKey,
       temperature: 0.6,

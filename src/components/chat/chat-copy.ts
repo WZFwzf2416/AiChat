@@ -23,9 +23,8 @@ export const CHAT_COPY = {
     "当前使用 Postgres + Prisma 持久化，会话和工具轨迹都会保存。",
   runtimeMemory:
     "当前运行在内存模式，刷新页面或重启开发服务后会话可能丢失。",
-  runtimeMock:
-    "当前未配置真实模型 API Key，应用会进入演示模式。",
-  searchPlaceholder: "搜索会话、模型或通道",
+  runtimeMock: "当前未配置真实模型 API Key，应用会进入演示模式。",
+  searchPlaceholder: "搜索会话、模型或 provider",
   noSessionMatch: "没有找到符合条件的会话，试试调整搜索关键词。",
   currentSession: "当前会话",
   noActiveSession: "请选择一个会话",

@@ -310,7 +310,7 @@ const tools: ToolDefinition[] = [
   },
   {
     name: "search_knowledge_base",
-    description: "搜索当前应用的真实知识库记录，返回最相关内容。",
+    description: "搜索当前应用维护的真实知识库记录，返回最相关内容及来源。",
     parameters: knowledgeSchema,
     async execute(args, toolCallId) {
       const parsed = knowledgeSchema.parse(args);
@@ -318,8 +318,11 @@ const tools: ToolDefinition[] = [
       const result =
         matches.length > 0
           ? matches
-              .map((entry, index) => `${index + 1}. ${entry.title}：${entry.content}`)
-              .join("\n")
+              .map(
+                (entry, index) =>
+                  `${index + 1}. ${entry.title}\n标签：${entry.tags.join("、") || "无"}\n内容：${entry.content}`,
+              )
+              .join("\n\n")
           : `没有命中与“${parsed.query}”相关的知识库条目。`;
 
       return {
@@ -335,6 +338,11 @@ const tools: ToolDefinition[] = [
             query: parsed.query,
             resultCount: matches.length,
             liveData: true,
+            sources: matches.map((entry) => ({
+              id: entry.id,
+              title: entry.title,
+              tags: entry.tags,
+            })),
           },
         },
         agentStep: {
@@ -346,6 +354,7 @@ const tools: ToolDefinition[] = [
             toolName: "search_knowledge_base",
             arguments: parsed,
             resultCount: matches.length,
+            sourceTitles: matches.map((entry) => entry.title),
           },
           createdAt: new Date().toISOString(),
         },
