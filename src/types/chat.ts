@@ -2,6 +2,8 @@ export type ChatRole = "system" | "user" | "assistant" | "tool";
 export type AppModelProvider = "OPENAI" | "MOCK";
 export type AgentStepStatus = "pending" | "running" | "completed" | "failed";
 export type RuntimeExperienceMode = "real" | "demo";
+export type ChatMessageVisibility = "visible" | "debug" | "internal";
+export type ChatTurnStatus = "streaming" | "completed" | "failed";
 
 export interface ToolCallRecord {
   id: string;
@@ -15,6 +17,14 @@ export interface ToolResultRecord {
   result: string;
 }
 
+export interface ChatMessageMetadata extends Record<string, unknown> {
+  visibility?: ChatMessageVisibility;
+  hidden?: boolean;
+  streaming?: boolean;
+  error?: boolean;
+  turnId?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -24,7 +34,7 @@ export interface ChatMessage {
   toolName?: string | null;
   toolCalls?: ToolCallRecord[] | null;
   toolResults?: ToolResultRecord[] | null;
-  metadata?: Record<string, unknown> | null;
+  metadata?: ChatMessageMetadata | null;
 }
 
 export interface ModelConfig {
@@ -45,6 +55,21 @@ export interface AgentStep {
   label: string;
   payload?: Record<string, unknown> | null;
   createdAt: string;
+}
+
+export interface ChatTurnSummary {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ChatTurnStatus;
+  userMessageId: string | null;
+  userContentPreview: string;
+  visibleMessageCount: number;
+  debugMessageCount: number;
+  toolCount: number;
+  stepCount: number;
+  toolNames: string[];
+  errorMessage: string | null;
 }
 
 export interface ChatSession {

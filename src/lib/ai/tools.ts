@@ -2,7 +2,11 @@ import { z } from "zod";
 
 import { searchKnowledgeBase } from "@/lib/repositories/chat-repository";
 import { createId } from "@/lib/utils";
-import type { AgentStep, ToolResultRecord } from "@/types/chat";
+import type {
+  AgentStep,
+  ChatMessageMetadata,
+  ToolResultRecord,
+} from "@/types/chat";
 
 type ToolExecution = {
   toolMessage: {
@@ -11,7 +15,7 @@ type ToolExecution = {
     toolCallId: string;
     toolName: string;
     toolResults: ToolResultRecord[];
-    metadata: Record<string, unknown>;
+    metadata: ChatMessageMetadata;
   };
   agentStep: AgentStep;
 };
@@ -225,7 +229,11 @@ const tools: ToolDefinition[] = [
           toolCallId,
           toolName: "get_current_time",
           toolResults: [{ toolCallId, toolName: "get_current_time", result }],
-          metadata: { timezone: parsed.timezone, liveData: true },
+          metadata: {
+            timezone: parsed.timezone,
+            liveData: true,
+            visibility: "visible",
+          },
         },
         agentStep: {
           id: createId("step"),
@@ -240,7 +248,7 @@ const tools: ToolDefinition[] = [
   },
   {
     name: "get_weather_snapshot",
-    description: "获取指定城市的真实当前天气快照。",
+    description: "获取指定城市的实时天气快照。",
     parameters: weatherSchema,
     async execute(args, toolCallId) {
       const parsed = weatherSchema.parse(args);
@@ -290,6 +298,7 @@ const tools: ToolDefinition[] = [
             liveData: true,
             source: "open-meteo",
             timezone: weather.timezone,
+            visibility: "visible",
           },
         },
         agentStep: {
@@ -310,7 +319,7 @@ const tools: ToolDefinition[] = [
   },
   {
     name: "search_knowledge_base",
-    description: "搜索当前应用维护的真实知识库记录，返回最相关内容及来源。",
+    description: "搜索当前应用维护的知识库记录，返回最相关的内容和来源。",
     parameters: knowledgeSchema,
     async execute(args, toolCallId) {
       const parsed = knowledgeSchema.parse(args);
@@ -320,7 +329,9 @@ const tools: ToolDefinition[] = [
           ? matches
               .map(
                 (entry, index) =>
-                  `${index + 1}. ${entry.title}\n标签：${entry.tags.join("、") || "无"}\n内容：${entry.content}`,
+                  `${index + 1}. ${entry.title}\n标签：${
+                    entry.tags.join("、") || "无"
+                  }\n内容：${entry.content}`,
               )
               .join("\n\n")
           : `没有命中与“${parsed.query}”相关的知识库条目。`;
@@ -338,6 +349,7 @@ const tools: ToolDefinition[] = [
             query: parsed.query,
             resultCount: matches.length,
             liveData: true,
+            visibility: "visible",
             sources: matches.map((entry) => ({
               id: entry.id,
               title: entry.title,
@@ -363,6 +375,43 @@ const tools: ToolDefinition[] = [
   },
 ];
 
+function createFailedToolExecution(
+  name: string,
+  args: Record<string, unknown>,
+  toolCallId: string,
+  error: unknown,
+): ToolExecution {
+  const message = error instanceof Error ? error.message : `工具 ${name} 执行失败。`;
+  const result = `工具 ${name} 执行失败：${message}`;
+
+  return {
+    toolMessage: {
+      role: "tool",
+      content: result,
+      toolCallId,
+      toolName: name,
+      toolResults: [{ toolCallId, toolName: name, result }],
+      metadata: {
+        error: true,
+        visibility: "visible",
+        arguments: args,
+      },
+    },
+    agentStep: {
+      id: createId("step"),
+      status: "failed",
+      kind: "tool",
+      label: `工具执行失败：${name}`,
+      payload: {
+        toolName: name,
+        arguments: args,
+        errorMessage: message,
+      },
+      createdAt: new Date().toISOString(),
+    },
+  };
+}
+
 export function getOpenAITools() {
   return tools.map((tool) => ({
     type: "function" as const,
@@ -381,27 +430,17 @@ export async function runToolByName(
 ) {
   const tool = tools.find((item) => item.name === name);
   if (!tool) {
-    const result = `未注册工具：${name}`;
-
-    return {
-      toolMessage: {
-        role: "tool" as const,
-        content: result,
-        toolCallId,
-        toolName: name,
-        toolResults: [{ toolCallId, toolName: name, result }],
-        metadata: { missingTool: true },
-      },
-      agentStep: {
-        id: createId("step"),
-        status: "failed" as const,
-        kind: "tool",
-        label: `工具解析失败：${name}`,
-        payload: { toolName: name },
-        createdAt: new Date().toISOString(),
-      },
-    };
+    return createFailedToolExecution(
+      name,
+      args,
+      toolCallId,
+      new Error(`未注册工具：${name}`),
+    );
   }
 
-  return tool.execute(args, toolCallId);
+  try {
+    return await tool.execute(args, toolCallId);
+  } catch (error) {
+    return createFailedToolExecution(name, args, toolCallId, error);
+  }
 }

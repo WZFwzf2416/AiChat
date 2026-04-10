@@ -44,6 +44,7 @@ export function ChatShell() {
     setSessionFilter,
     showEarlierMessages,
     streamingStatusLabel,
+    turnSummaries,
     updateDraftSystemPrompt,
     updateMaxTokens,
     updateModelConfig,
@@ -137,7 +138,7 @@ export function ChatShell() {
                       }}
                       className="rounded-full bg-rose-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-rose-500"
                     >
-                      重新发送
+                      重试发送
                     </button>
                   ) : null}
                   {error.canReload ? (
@@ -187,6 +188,7 @@ export function ChatShell() {
               <ChatInspectorPanel
                 activeSession={activeSession}
                 diagnostics={diagnostics}
+                turnSummaries={turnSummaries}
                 knowledgeEntries={knowledgeEntries}
                 isSavingKnowledgeEntry={isSavingKnowledgeEntry}
                 onCreateKnowledgeEntry={(input) => createKnowledgeEntry(input)}

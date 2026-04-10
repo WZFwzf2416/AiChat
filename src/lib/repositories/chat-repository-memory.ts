@@ -6,6 +6,7 @@ import {
 import { createId, summarizeTitle } from "@/lib/utils";
 import type {
   ChatBootstrapPayload,
+  ChatMessageMetadata,
   ChatSession,
   KnowledgeEntry,
   KnowledgeEntryInput,
@@ -63,7 +64,11 @@ export function getMemorySession(sessionId: string) {
   return getMemoryStore().sessions.find((session) => session.id === sessionId) ?? null;
 }
 
-export function saveMemoryUserMessage(sessionId: string, content: string) {
+export function saveMemoryUserMessage(
+  sessionId: string,
+  content: string,
+  metadata?: ChatMessageMetadata,
+) {
   const store = getMemoryStore();
   const session = store.sessions.find((item) => item.id === sessionId);
 
@@ -76,6 +81,7 @@ export function saveMemoryUserMessage(sessionId: string, content: string) {
     role: "user",
     content,
     createdAt: new Date().toISOString(),
+    metadata: metadata ?? { visibility: "visible" },
   });
   session.updatedAt = new Date().toISOString();
 

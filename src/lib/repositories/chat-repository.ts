@@ -4,7 +4,11 @@ import {
   getDefaultModelConfig,
   getSuggestedSessionProvider,
 } from "@/lib/models";
-import type { KnowledgeEntryInput, SessionSettingsPatch } from "@/types/chat";
+import type {
+  ChatMessageMetadata,
+  KnowledgeEntryInput,
+  SessionSettingsPatch,
+} from "@/types/chat";
 import {
   createRuntimeStatus,
   isDatabaseUnavailableError,
@@ -117,20 +121,24 @@ export async function getSession(sessionId: string) {
   }
 }
 
-export async function saveUserMessage(sessionId: string, content: string) {
+export async function saveUserMessage(
+  sessionId: string,
+  content: string,
+  metadata?: ChatMessageMetadata,
+) {
   if (!prisma || resolveStorageMode() === "memory") {
     ensureMemoryModeAllowed();
-    return saveMemoryUserMessage(sessionId, content);
+    return saveMemoryUserMessage(sessionId, content, metadata);
   }
 
   try {
-    return await savePrismaUserMessage(sessionId, content);
+    return await savePrismaUserMessage(sessionId, content, metadata);
   } catch (error) {
     if (!shouldFallbackToMemory(error)) {
       throw error;
     }
 
-    return saveMemoryUserMessage(sessionId, content);
+    return saveMemoryUserMessage(sessionId, content, metadata);
   }
 }
 

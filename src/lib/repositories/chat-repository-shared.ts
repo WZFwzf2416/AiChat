@@ -9,6 +9,7 @@ import { createId, safeJsonParse } from "@/lib/utils";
 import type {
   AgentStep,
   ChatMessage,
+  ChatMessageMetadata,
   ChatSession,
   KnowledgeEntry,
   ModelConfig,
@@ -23,7 +24,7 @@ export type PersistedMessageInput = {
   toolName?: string | null;
   toolCalls?: ToolCallRecord[] | null;
   toolResults?: ToolResultRecord[] | null;
-  metadata?: Record<string, unknown> | null;
+  metadata?: ChatMessageMetadata | null;
 };
 
 export type PersistedAssistantTurn = {
@@ -108,7 +109,7 @@ export function createStarterSession(
         content:
           "欢迎来到你的 AI Chat 工作台。这里保留了真实聊天、工具调用和 Agent 轨迹的完整链路，你可以一边试，一边理解产品和代码是怎么连起来的。",
         createdAt: now,
-        metadata: { seed: true },
+        metadata: { seed: true, visibility: "visible" },
       },
     ],
     agentSteps: [],
@@ -171,10 +172,7 @@ export function normalizeMessage(record: {
       record.toolResults,
       null,
     ),
-    metadata: safeJsonParse<Record<string, unknown> | null>(
-      record.metadata,
-      null,
-    ),
+    metadata: safeJsonParse<ChatMessageMetadata | null>(record.metadata, null),
   };
 }
 

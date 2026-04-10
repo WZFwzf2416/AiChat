@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { CHAT_COPY } from "@/components/chat/chat-copy";
-import { cn } from "@/lib/utils";
+import { cn, getMessageVisibility, isMessageVisibleToUser } from "@/lib/utils";
 import type { ChatMessage, ChatSession } from "@/types/chat";
 
 export type SendingStage = "thinking" | "tooling" | "finalizing" | null;
@@ -21,6 +21,7 @@ export type ChatStreamEvent =
       toolName: string;
       label: string;
       summary?: string;
+      error?: boolean;
     };
 
 export type AssistantDiagnostics = {
@@ -55,7 +56,7 @@ export function getAssistantDiagnostics(
   const latestAssistant = [...session.messages]
     .reverse()
     .find(
-      (message) => message.role === "assistant" && !message.metadata?.hidden,
+      (message) => message.role === "assistant" && isMessageVisibleToUser(message),
     );
 
   const metadata = latestAssistant?.metadata;
@@ -117,7 +118,14 @@ export function getToolBadgeLabel(toolName: string | null | undefined) {
   }
 }
 
-export function getToolBadgeClasses(toolName: string | null | undefined) {
+export function getToolBadgeClasses(
+  toolName: string | null | undefined,
+  hasError = false,
+) {
+  if (hasError) {
+    return "bg-rose-100 text-rose-700";
+  }
+
   switch (toolName) {
     case "get_current_time":
       return "bg-sky-100 text-sky-700";
@@ -134,7 +142,13 @@ export function isStreamingMessage(message: ChatMessage) {
   return message.metadata?.streaming === true;
 }
 
-export function inferSendingStage(content: string): Exclude<SendingStage, null> {
+export function isToolErrorMessage(message: ChatMessage) {
+  return message.role === "tool" && message.metadata?.error === true;
+}
+
+export function inferSendingStage(
+  content: string,
+): Exclude<SendingStage, null> {
   const normalized = content.toLowerCase();
 
   if (
@@ -234,7 +248,7 @@ function MarkdownBody({ content }: { content: string }) {
   }
 
   return (
-    <div className="prose prose-stone max-w-none text-[15px] leading-7 prose-p:my-4 prose-headings:tracking-tight prose-headings:text-stone-900 prose-h1:text-xl prose-h2:text-lg prose-h3:text-sm prose-h3:uppercase prose-h3:tracking-[0.24em] prose-code:rounded prose-code:bg-stone-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.92em] prose-code:text-stone-800 prose-code:before:content-none prose-code:after:content-none prose-blockquote:border-l-2 prose-blockquote:border-amber-300 prose-blockquote:bg-amber-50/60 prose-blockquote:px-4 prose-blockquote:py-3 prose-blockquote:font-normal prose-blockquote:text-stone-700 prose-hr:my-6 prose-hr:border-stone-200 prose-li:my-1 prose-table:my-5 prose-table:w-full prose-table:overflow-hidden prose-table:rounded-2xl prose-table:border prose-table:border-black/5 prose-thead:bg-stone-100 prose-th:border-b prose-th:border-black/5 prose-th:px-4 prose-th:py-3 prose-th:text-left prose-th:font-semibold prose-td:px-4 prose-td:py-3 prose-td:align-top prose-td:text-stone-700">
+    <div className="prose prose-stone max-w-none text-[15px] leading-7 prose-p:my-4 prose-headings:tracking-tight prose-headings:text-stone-900 prose-h1:text-xl prose-h2:text-lg prose-h3:text-sm prose-h3:uppercase prose-h3:tracking-[0.24em] prose-code:rounded prose-code:bg-stone-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.92em] prose-code:text-stone-800 prose-code:before:content-none prose-code:after:content-none prose-blockquote:border-l-2 prose-blockquote:border-amber-300 prose-blockquote:bg-amber-50/60 prose-blockquote:px-4 prose-blockquote:py-3 prose-blockquote:font-normal prose-blockquote:text-stone-700 prose-hr:my-6 prose-hr:border-stone-200 prose-li:my-1 prose-table:my-5 prose-table:w-full prose-thead:bg-stone-100 prose-th:border-b prose-th:border-black/5 prose-th:px-4 prose-th:py-3 prose-th:text-left prose-th:font-semibold prose-td:px-4 prose-td:py-3 prose-td:align-top prose-td:text-stone-700">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -345,23 +359,5 @@ export function ReadableMessageBody({
 }
 
 export function isVisibleMessage(message: ChatMessage) {
-  if (message.metadata?.hidden) {
-    return false;
-  }
-
-  if (message.role === "assistant") {
-    const trimmedContent = message.content.trim();
-    const hiddenAssistantMessages = new Set([
-      "正在规划工具调用...",
-      "正在检索知识库内容...",
-      "正在查询当前时间...",
-      "正在获取实时天气...",
-    ]);
-
-    if (hiddenAssistantMessages.has(trimmedContent)) {
-      return false;
-    }
-  }
-
-  return true;
+  return getMessageVisibility(message.metadata) === "visible";
 }

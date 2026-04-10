@@ -5,6 +5,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "@/lib/models";
 import { summarizeTitle } from "@/lib/utils";
 import type {
   ChatBootstrapPayload,
+  ChatMessageMetadata,
   ChatSession,
   KnowledgeEntry,
   KnowledgeEntryInput,
@@ -150,7 +151,7 @@ export async function getPrismaBootstrap(): Promise<ChatBootstrapPayload> {
             role: "ASSISTANT",
             content:
               "你的工作台已经准备好了。你可以先让我帮你设计功能、做代码评审，或者试试查询时间、天气、知识库这类 Agent 风格任务。",
-            metadata: { seed: true },
+            metadata: { seed: true, visibility: "visible" },
           },
         },
       },
@@ -218,7 +219,11 @@ export async function getPrismaSession(sessionId: string) {
   return normalizeDatabaseSession(sessionId);
 }
 
-export async function savePrismaUserMessage(sessionId: string, content: string) {
+export async function savePrismaUserMessage(
+  sessionId: string,
+  content: string,
+  metadata?: ChatMessageMetadata,
+) {
   if (!prisma) {
     throw new Error("Prisma client 不可用。");
   }
@@ -228,6 +233,7 @@ export async function savePrismaUserMessage(sessionId: string, content: string) 
       sessionId,
       role: "USER",
       content,
+      metadata: (metadata ?? { visibility: "visible" }) as Prisma.InputJsonValue,
     },
   });
 

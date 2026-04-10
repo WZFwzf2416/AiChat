@@ -7,6 +7,7 @@ import {
   ReadableMessageBody,
   getToolBadgeClasses,
   getToolBadgeLabel,
+  isToolErrorMessage,
   shouldShowToolDetails,
   toolSummary,
   type SendingStage,
@@ -98,71 +99,81 @@ export function ChatMessageThread({
           </div>
         ) : null}
 
-        {displayedMessages.map((message) => (
-          <article
-            key={message.id}
-            className={cn(
-              "min-w-0 overflow-x-auto rounded-[24px] px-4 py-4",
-              message.role === "user" &&
-                "ml-auto max-w-[85%] bg-stone-900 text-white",
-              message.role === "assistant" &&
-                "max-w-[90%] bg-white text-stone-900 shadow-sm",
-              message.role === "tool" &&
-                "max-w-[90%] border border-dashed border-amber-200 bg-amber-50 text-stone-700",
-            )}
-          >
-            <div className="flex items-center justify-between gap-4 text-xs uppercase tracking-[0.2em]">
-              <span>{getRoleLabel(message)}</span>
-              <span
-                className={
-                  message.role === "user" ? "text-stone-300" : "text-stone-400"
-                }
-              >
-                {formatTimestamp(message.createdAt)}
-              </span>
-            </div>
+        {displayedMessages.map((message) => {
+          const toolFailed = isToolErrorMessage(message);
 
-            {message.role === "tool" ? (
-              <div className="mt-3 flex items-center gap-2 text-xs">
+          return (
+            <article
+              key={message.id}
+              className={cn(
+                "min-w-0 overflow-x-auto rounded-[24px] px-4 py-4",
+                message.role === "user" &&
+                  "ml-auto max-w-[85%] bg-stone-900 text-white",
+                message.role === "assistant" &&
+                  "max-w-[90%] bg-white text-stone-900 shadow-sm",
+                message.role === "tool" &&
+                  !toolFailed &&
+                  "max-w-[90%] border border-dashed border-amber-200 bg-amber-50 text-stone-700",
+                message.role === "tool" &&
+                  toolFailed &&
+                  "max-w-[90%] border border-dashed border-rose-200 bg-rose-50 text-rose-900",
+              )}
+            >
+              <div className="flex items-center justify-between gap-4 text-xs uppercase tracking-[0.2em]">
+                <span>{getRoleLabel(message)}</span>
                 <span
-                  className={cn(
-                    "rounded-full px-2.5 py-1 font-medium",
-                    getToolBadgeClasses(message.toolName),
-                  )}
+                  className={
+                    message.role === "user" ? "text-stone-300" : "text-stone-400"
+                  }
                 >
-                  {getToolBadgeLabel(message.toolName)}
-                </span>
-                <span className="text-stone-500">
-                  {CHAT_COPY.toolResultDescription}
+                  {formatTimestamp(message.createdAt)}
                 </span>
               </div>
-            ) : null}
 
-            <ReadableMessageBody
-              message={message}
-              sendingStage={sendingStage}
-              streamingStatusLabel={streamingStatusLabel}
-            />
-
-            {message.role === "tool" && shouldShowToolDetails(message) ? (
-              <details className="mt-3 rounded-[18px] border border-black/5 bg-white/80 px-3 py-3 text-xs leading-6 text-stone-600">
-                <summary className="cursor-pointer list-none font-medium text-stone-700">
-                  {CHAT_COPY.viewToolRawResult}
-                </summary>
-                <div className="mt-2 border-t border-black/5 pt-2">
-                  <ReadableMessageBody
-                    message={{
-                      ...message,
-                      content: toolSummary(message) ?? "",
-                    }}
-                    sendingStage={null}
-                    streamingStatusLabel={null}
-                  />
+              {message.role === "tool" ? (
+                <div className="mt-3 flex items-center gap-2 text-xs">
+                  <span
+                    className={cn(
+                      "rounded-full px-2.5 py-1 font-medium",
+                      getToolBadgeClasses(message.toolName, toolFailed),
+                    )}
+                  >
+                    {getToolBadgeLabel(message.toolName)}
+                  </span>
+                  <span className={toolFailed ? "text-rose-700" : "text-stone-500"}>
+                    {toolFailed
+                      ? CHAT_COPY.toolErrorDescription
+                      : CHAT_COPY.toolResultDescription}
+                  </span>
                 </div>
-              </details>
-            ) : null}
-          </article>
-        ))}
+              ) : null}
+
+              <ReadableMessageBody
+                message={message}
+                sendingStage={sendingStage}
+                streamingStatusLabel={streamingStatusLabel}
+              />
+
+              {message.role === "tool" && shouldShowToolDetails(message) ? (
+                <details className="mt-3 rounded-[18px] border border-black/5 bg-white/80 px-3 py-3 text-xs leading-6 text-stone-600">
+                  <summary className="cursor-pointer list-none font-medium text-stone-700">
+                    {CHAT_COPY.viewToolRawResult}
+                  </summary>
+                  <div className="mt-2 border-t border-black/5 pt-2">
+                    <ReadableMessageBody
+                      message={{
+                        ...message,
+                        content: toolSummary(message) ?? "",
+                      }}
+                      sendingStage={null}
+                      streamingStatusLabel={null}
+                    />
+                  </div>
+                </details>
+              ) : null}
+            </article>
+          );
+        })}
         <div ref={endRef} />
       </div>
 

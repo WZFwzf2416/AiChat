@@ -18,7 +18,7 @@ import {
   isVisibleMessage,
   parseSseEvent,
 } from "@/components/chat/message-content";
-import { createId } from "@/lib/utils";
+import { buildTurnSummaries, createId } from "@/lib/utils";
 import type {
   ChatBootstrapPayload,
   ChatMessage,
@@ -224,6 +224,7 @@ export function useChatWorkspace() {
   );
   const lastVisibleMessage = displayedMessages.at(-1) ?? null;
   const diagnostics = getAssistantDiagnostics(activeSession);
+  const turnSummaries = buildTurnSummaries(activeSession);
 
   useEffect(() => {
     setVisibleMessageCount(18);
@@ -321,6 +322,7 @@ export function useChatWorkspace() {
       return;
     }
 
+    const optimisticTurnId = createId("turn");
     const optimisticUserId = createId("msg");
     const optimisticAssistantId = createId("msg");
     const optimisticUserMessage: ChatMessage = {
@@ -328,6 +330,10 @@ export function useChatWorkspace() {
       role: "user",
       content: userContent,
       createdAt: new Date().toISOString(),
+      metadata: {
+        turnId: optimisticTurnId,
+        visibility: "visible",
+      },
     };
 
     setIsSending(true);
@@ -361,7 +367,11 @@ export function useChatWorkspace() {
                           role: "assistant",
                           content: "",
                           createdAt: new Date().toISOString(),
-                          metadata: { streaming: true },
+                          metadata: {
+                            streaming: true,
+                            visibility: "visible",
+                            turnId: optimisticTurnId,
+                          },
                         },
                       ],
                     }
@@ -447,7 +457,11 @@ export function useChatWorkspace() {
                                   ? {
                                       ...message,
                                       content: assistantText,
-                                      metadata: { streaming: true },
+                                      metadata: {
+                                        streaming: true,
+                                        visibility: "visible",
+                                        turnId: optimisticTurnId,
+                                      },
                                     }
                                   : message,
                               ),
@@ -515,7 +529,7 @@ export function useChatWorkspace() {
       const payload = await response.json();
 
       if (!response.ok) {
-        throw new Error(payload.error ?? "新增知识条目失败。");
+        throw new Error(payload.error ?? CHAT_COPY.knowledgeCreateError);
       }
 
       startTransition(() => {
@@ -530,7 +544,7 @@ export function useChatWorkspace() {
       });
     } catch (reason: unknown) {
       setWorkspaceError(
-        reason instanceof Error ? reason.message : "新增知识条目失败。",
+        reason instanceof Error ? reason.message : CHAT_COPY.knowledgeCreateError,
         {
           canReload: false,
         },
@@ -646,6 +660,7 @@ export function useChatWorkspace() {
     setSessionFilter,
     showEarlierMessages,
     streamingStatusLabel,
+    turnSummaries,
     updateDraftSystemPrompt,
     updateMaxTokens,
     updateModelConfig,

@@ -9,7 +9,7 @@ import {
   saveUserMessage,
   updateSessionSettings,
 } from "@/lib/repositories/chat-repository";
-import { buildContextWindow } from "@/lib/utils";
+import { buildContextWindow, createId } from "@/lib/utils";
 import type { KnowledgeEntryInput, SessionSettingsPatch } from "@/types/chat";
 
 export async function getBootstrapData() {
@@ -40,7 +40,11 @@ export async function addKnowledgeEntry(input: KnowledgeEntryInput) {
 }
 
 export async function handleChatTurn(sessionId: string, content: string) {
-  const updatedSession = await saveUserMessage(sessionId, content);
+  const turnId = createId("turn");
+  const updatedSession = await saveUserMessage(sessionId, content, {
+    turnId,
+    visibility: "visible",
+  });
 
   if (!updatedSession) {
     throw new Error("未找到对应会话。");
@@ -58,6 +62,7 @@ export async function handleChatTurn(sessionId: string, content: string) {
     systemPrompt: latestSession.systemPrompt,
     temperature: latestSession.temperature,
     maxOutputTokens: latestSession.maxOutputTokens,
+    turnId,
     messages: contextWindow.messages,
     context: {
       totalMessages: contextWindow.totalMessages,
