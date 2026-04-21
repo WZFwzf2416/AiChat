@@ -1,6 +1,13 @@
 # AI Chat to Agent Studio
 
-一个面向前端开发者的学习型 AI Chat 项目。它从真实可用的聊天产品骨架开始，包含会话持久化、模型预设、SSE 流式体验和工具调用，再逐步往 Agent 系统演进。
+一个面向前端开发者的学习型 AI Chat 项目。它从真实可用的聊天工作台出发，逐步演进为带工具调用、可观测性和运行策略的单 Agent Runtime。
+
+## 当前状态
+
+- 已具备真实聊天工作流：会话、消息、模型配置、知识库、工具调用、SSE 流式输出。
+- 已具备单 Agent 循环基础：`planning -> tooling -> planning -> finalizing`。
+- 已具备企业级底座元素：`turnId`、`traceId`、runtime policy、结构化工具结果、Inspector 调试面板。
+- 当前阶段优先做清理、稳定性和治理能力，不再盲目堆新功能。
 
 ## 技术栈
 
@@ -9,25 +16,34 @@
 - Tailwind CSS v4
 - Prisma
 - PostgreSQL
-- OpenAI Compatible Provider 抽象，支持 OpenAI 和通义千问
+- OpenAI Compatible Provider（支持 OpenAI 与通义千问）
 
-## 当前实现
+## 目录速览
 
-- 聊天会话与持久化友好的仓储层设计
-- `ChatSession`、`Message`、`ModelConfig`、`AgentStep`、`KnowledgeEntry` 的 Prisma Schema
-- 缺失 `DATABASE_URL` 时自动回退到内存模式，避免数据库阻塞学习流程
-- OpenAI Compatible 模型层，支持：
-  - OpenAI 官方接口
-  - 通义千问 DashScope Compatible 接口
-  - Demo 模式兜底
-- 工具调用链路和 Agent 轨迹：
+- `src/app`：页面与 API Route
+- `src/components/chat`：聊天工作台 UI
+- `src/lib/chat-service.ts`：聊天编排入口
+- `src/lib/ai/runtime`：Agent runtime
+- `src/lib/ai/tools.ts`：工具注册与执行
+- `src/lib/repositories`：存储抽象、Prisma、内存兜底
+- `docs`：路线图、流程图、工作日志
+
+## 核心能力
+
+- 聊天会话与消息持久化
+- 模型配置与会话级运行参数
+- Markdown 渲染与长内容局部滚动
+- 结构化 SSE 事件流
+- 工具调用闭环：
   - `get_current_time`
   - `get_weather_snapshot`
   - `search_knowledge_base`
-- 服务端到前端的 SSE 结构化事件流
-- 会话级模型预设、温度、最大输出长度、系统提示词设置
-- Markdown 标准渲染：`react-markdown + remark-gfm`
-- 上下文裁剪观测与本轮 metadata 面板
+- Agent 执行轨迹与 Inspector 调试面板
+- 结构化工具结果：
+  - `summary`
+  - `raw`
+  - `display`
+  - `sources`
 
 ## 快速开始
 
@@ -43,7 +59,7 @@ npm install
 cp .env.example .env.local
 ```
 
-3. 如果要启用真实持久化，先启动 PostgreSQL
+3. 如需本地数据库，启动 PostgreSQL
 
 ```bash
 docker compose up -d
@@ -55,7 +71,7 @@ docker compose up -d
 npm run prisma:generate
 ```
 
-5. 推送 schema 到数据库
+5. 同步 schema
 
 ```bash
 npm run prisma:push
@@ -67,66 +83,36 @@ npm run prisma:push
 npm run dev
 ```
 
-## 通义千问接入
-
-本项目支持通过 DashScope 的 OpenAI Compatible 接口接入千问，默认优先模型是 `qwen-plus`。
-
-在 [\.env.local](E:\代码\ai项目\chat\.env.local) 里填写：
-
-```env
-QWEN_API_KEY="你的 DashScope API Key"
-QWEN_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
-DEFAULT_QWEN_MODEL="qwen-plus"
-```
-
-如果你只想先用千问做真实联调，可以把 `OPENAI_API_KEY` 留空。
-
-## 运行模式边界
-
-- 配置了真实模型 key 时：默认进入 `real` 模式
-- 没有真实模型 key 时：进入 `demo` 模式
-- `demo` 模式下仍保留聊天链路、工具执行和持久化，但最终文本不来自真实大模型
-- 如果已经配置真实 key，又想保留 demo provider，可在环境变量中显式设置：
-
-```env
-ALLOW_DEMO_PROVIDER="true"
-```
-
 ## 环境说明
 
-- 没有 `DATABASE_URL` 时，应用会使用内存模式
-- 配置 `QWEN_API_KEY` 后，千问模型会通过 Compatible 接口走真实调用
-- 配置 `OPENAI_API_KEY` 后，也可以切回 OpenAI 模型做对比
-- 当前工具中：
-  - 时间：真实时间
-  - 天气：Open-Meteo 实时接口
-  - 知识库：项目内真实知识库表 / 内存表
+- 配置了真实模型 key 时，默认进入 `real` 模式。
+- 没有真实模型 key 时，会进入 `demo` 模式兜底。
+- 没有 `DATABASE_URL` 时，会回退到内存模式，但仅推荐用于开发环境。
+- 通义千问通过 DashScope 的 OpenAI Compatible 接口接入。
 
-## 编码约定
+## 工程规则
 
-- 项目源码统一使用 `UTF-8`
+- 源码统一使用 `UTF-8`
 - 行尾统一使用 `LF`
-- 不要保存成 `ANSI`、`GBK` 或 `UTF-8 with BOM`
-- 如果你使用 VS Code，工作区设置已经固定为 `utf8`
+- 默认中文文案
+- 页面组件负责 UI，编排逻辑放 service 层，模型适配放 provider/runtime 层，存储访问放 repository 层
+- 长内容必须待在局部滚动容器内
 
-## Windows 处理
+## 验证与记录要求
 
-如果 Windows 终端里仍然显示乱码，先把终端切到 UTF-8，再进行命令行编辑：
+从现在开始，所有涉及代码的改动都必须同时满足两件事：
 
-```powershell
-chcp 65001
-$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
-```
+1. 自我验证通过
+   - 至少执行 `npm run lint`
+   - 涉及构建链路时执行 `npm run build`
+2. 将操作、结果、风险和下一步记录到工作日志
+   - 统一记录在 [docs/worklog.md](/E:/代码/ai项目/chat/docs/worklog.md)
 
-建议：
-- 优先用 Windows Terminal 或 VS Code 集成终端
-- 如果有条件，优先用 PowerShell 7
-- 终端一旦显示乱码，不要把那段乱码输出直接复制回源码
-- 以编辑器里打开的文件内容作为最终真值，不以终端回显为准
+## 相关文档
 
-## 当前重点
-
-- 继续清理历史乱码和演示残留
-- 保持 real / demo 边界清晰
-- 持续把现有能力打磨成更像产品的体验
-- 不再继续堆新功能，优先标准化现有能力
+- [项目协作说明](/E:/代码/ai项目/chat/AGENTS.md)
+- [项目备注](/E:/代码/ai项目/chat/PROJECT_NOTES.md)
+- [待办列表](/E:/代码/ai项目/chat/TODO.md)
+- [Agent 演进路线图](/E:/代码/ai项目/chat/docs/agent-evolution-roadmap.md)
+- [企业级流程图](/E:/代码/ai项目/chat/docs/enterprise-agent-flow.md)
+- [工作日志](/E:/代码/ai项目/chat/docs/worklog.md)

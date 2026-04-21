@@ -1,55 +1,60 @@
-# 项目协作记忆
+# 项目备注
 
-## 项目目标
-- 先完成一个真实可用的 AI Chat 项目。
-- 在现有架构上逐步演进成可扩展的 Agent 系统。
-- 保持前端友好、易学、可持续迭代。
+## 产品定位
 
-## 当前技术栈
-- Next.js App Router
-- TypeScript
-- Tailwind CSS
-- Prisma + Postgres
-- Qwen / OpenAI Compatible API
+- 从真实 AI Chat 项目起步
+- 逐步演进为可观测、可调试、可扩展的 Agent Runtime
+- 保持对前端开发者友好，方便学习链路、状态机和工程分层
 
-## 已完成
-- 聊天工作台主界面搭建完成
-- 会话、消息、模型配置已接入持久化
-- 支持 Qwen 真实联调
-- 支持 SSE 结构化流式返回
-- 支持工具调用：时间、天气、知识库检索
-- 支持 Agent 轨迹展示
-- 页面主要文案已中文化
-- 聊天区改为内部滚动
-- `chat-shell.tsx` 已拆为 sidebar / header / message-thread / inspector / composer
-- Markdown 已切换到 `react-markdown + remark-gfm`
+## 当前阶段重点
 
-## 当前重点
-- 明确 real 和 demo 的运行边界
-- 持续清理主链路里的 demo / mock 痕迹
-- 把 Markdown 渲染、工具流转和运行提示做得更标准
-- 不再新增功能，优先把现有能力做成真实、稳定、可维护的产品
+- 不再盲目加功能，优先清理历史乱码、重复逻辑和不稳定实现
+- 把现有能力做成稳定、真实、可维护的产品底座
+- 继续强化企业级方向所需的可观测性、治理能力和验证流程
 
-## 关键设计约定
-- 前端不直接调用模型 SDK，统一走应用内 API
-- 业务流程放在 service 层，模型适配放在 provider 层
-- 数据读写统一走 repository 层
-- 页面默认中文文案
-- 优先真实能力，demo 仅作兜底
+## 当前架构分层
 
-## 关键环境说明
-- 默认优先使用 Qwen 作为真实模型后端
-- 没有真实模型 key 时允许回退到 demo provider
-- 已配置真实模型 key 时，默认不再暴露 mock provider
-- Docker + Postgres 用于本地持久化开发
+- 页面与交互：`src/components/chat`
+- 服务编排：`src/lib/chat-service.ts`
+- Agent runtime：`src/lib/ai/runtime`
+- 工具注册与执行：`src/lib/ai/tools.ts`
+- 存储访问：`src/lib/repositories`
 
-## 最近已收口
-- provider、tools、service 改为更干净的标准实现
-- SSE 事件流支持结构化 `tool` 事件
-- 运行状态明确区分 `real` / `demo`
-- 文案常量、侧栏、消息线程、观测面板正在持续去乱码和去内部术语
+## 当前已稳定的能力
 
-## 下一步建议
-- 继续清理现有 UI 中残留的内部实现词
-- 继续收敛 demo 模式提示与错误提示
-- 继续优化现有长消息和工具消息的可读性，但不新增功能
+- 聊天工作台主界面
+- 会话、消息、模型配置持久化
+- 通义千问 / OpenAI Compatible 模型接入
+- SSE 结构化流式事件
+- 工具调用与 Agent 轨迹
+- Inspector 运行态面板
+- 结构化工具结果与答案引用来源
+
+## 工程纪律
+
+- 所有源码按 `UTF-8 + LF` 维护
+- Windows 终端乱码不能直接拿来回填源码
+- JSX 或文案块损坏时，优先整块重写
+- 改代码后必须自验证并写入工作日志
+
+## 自验证标准
+
+- 默认执行：`npm run lint`
+- 涉及构建、模块解析、路由、类型变更时执行：`npm run build`
+- 如果某项验证没跑，需要在工作日志里明确说明
+
+## 工作日志约定
+
+- 统一记录到 [docs/worklog.md](/E:/代码/ai项目/chat/docs/worklog.md)
+- 每次代码改动至少记录：
+  - 时间
+  - 修改范围
+  - 已执行验证
+  - 当前结果
+  - 已知风险或下一步
+
+## 最近一次状态
+
+- 已修复 `@/components/chat/chat-inspector-panel` 模块缺失导致的构建报错
+- 已重建并清理 Inspector、工具结果卡片、消息正文、共享文案等核心文件
+- 已重新跑通 `npm run lint` 与 `npm run build`

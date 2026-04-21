@@ -11,10 +11,44 @@ export interface ToolCallRecord {
   arguments: Record<string, unknown>;
 }
 
+export interface ToolSourceRecord {
+  id?: string;
+  title: string;
+  sourceType?: "web" | "knowledge" | "api" | "system" | "tool";
+  href?: string | null;
+  snippet?: string | null;
+  tags?: string[];
+  confidence?: number | null;
+  updatedAt?: string | null;
+  citationLabel?: string | null;
+  originTool?: string | null;
+  meta?: Record<string, unknown> | null;
+}
+
+export interface ToolDisplayMetric {
+  label: string;
+  value: string;
+}
+
+export interface ToolDisplayData {
+  kind: "time" | "weather" | "knowledge" | "generic";
+  layout?: "status" | "metrics" | "list" | "table" | "timeline";
+  title?: string;
+  body?: string | null;
+  items?: string[];
+  metrics?: ToolDisplayMetric[];
+  rows?: Array<Record<string, string>>;
+  tone?: "info" | "success" | "warning" | "danger";
+}
+
 export interface ToolResultRecord {
   toolCallId: string;
   toolName: string;
   result: string;
+  summary?: string | null;
+  raw?: Record<string, unknown> | null;
+  display?: ToolDisplayData | null;
+  sources?: ToolSourceRecord[] | null;
 }
 
 export interface ChatMessageMetadata extends Record<string, unknown> {
@@ -23,6 +57,9 @@ export interface ChatMessageMetadata extends Record<string, unknown> {
   streaming?: boolean;
   error?: boolean;
   turnId?: string;
+  traceId?: string;
+  citationLabels?: string[];
+  citedSources?: ToolSourceRecord[];
 }
 
 export interface ChatMessage {
@@ -94,6 +131,14 @@ export interface KnowledgeEntry {
   createdAt: string;
   updatedAt: string;
 }
+
+export type SearchableKnowledgeEntry = Omit<
+  KnowledgeEntry,
+  "createdAt" | "updatedAt"
+> & {
+  createdAt: string | Date;
+  updatedAt: string | Date;
+};
 
 export interface KnowledgeEntryInput {
   title: string;

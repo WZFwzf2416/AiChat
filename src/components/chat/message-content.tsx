@@ -5,21 +5,46 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { CHAT_COPY } from "@/components/chat/chat-copy";
-import { cn, getMessageVisibility, isMessageVisibleToUser } from "@/lib/utils";
-import type { ChatMessage, ChatSession } from "@/types/chat";
+import { getPrimaryToolResult } from "@/components/chat/tool-result-card";
+import {
+  cn,
+  getMessageTurnId,
+  getMessageVisibility,
+  isMessageVisibleToUser,
+} from "@/lib/utils";
+import type {
+  ChatMessage,
+  ChatSession,
+  ToolResultRecord,
+  ToolSourceRecord,
+} from "@/types/chat";
 
 export type SendingStage = "thinking" | "tooling" | "finalizing" | null;
 
+type RuntimePolicySnapshot = {
+  maxPlanningIterations: number;
+  maxToolCallsPerIteration: number;
+  toolExecutionTimeoutMs: number;
+  toolRetryLimit: number;
+  heuristicFallbackEnabled: boolean;
+  persistPlanningMessages: boolean;
+};
+
 export type ChatStreamEvent =
-  | { type: "stage"; stage: Exclude<SendingStage, null> }
+  | {
+      type: "stage";
+      stage: Exclude<SendingStage, null>;
+      traceId?: string;
+    }
   | { type: "delta"; text: string }
-  | { type: "complete" }
-  | { type: "error"; message: string }
+  | { type: "complete"; traceId?: string }
+  | { type: "error"; message: string; traceId?: string }
   | {
       type: "tool";
       phase: "start" | "result";
       toolName: string;
       label: string;
+      traceId?: string;
       summary?: string;
       error?: boolean;
     };
@@ -36,6 +61,13 @@ export type AssistantDiagnostics = {
   includedMessages: number | null;
   trimmedCount: number | null;
   toolMessages: number | null;
+  traceId: string | null;
+  runtimePolicy: RuntimePolicySnapshot | null;
+  toolAttemptCount: number | null;
+  maxToolDurationMs: number | null;
+  latestToolName: string | null;
+  citationLabels: string[];
+  citedSources: ToolSourceRecord[];
 };
 
 function readNumber(value: unknown) {
@@ -44,6 +76,44 @@ function readNumber(value: unknown) {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value : null;
+}
+
+function readRuntimePolicy(value: unknown): RuntimePolicySnapshot | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const policy = value as Record<string, unknown>;
+
+  if (
+    typeof policy.maxPlanningIterations !== "number" ||
+    typeof policy.maxToolCallsPerIteration !== "number" ||
+    typeof policy.toolExecutionTimeoutMs !== "number" ||
+    typeof policy.toolRetryLimit !== "number" ||
+    typeof policy.heuristicFallbackEnabled !== "boolean" ||
+    typeof policy.persistPlanningMessages !== "boolean"
+  ) {
+    return null;
+  }
+
+  return {
+    maxPlanningIterations: policy.maxPlanningIterations,
+    maxToolCallsPerIteration: policy.maxToolCallsPerIteration,
+    toolExecutionTimeoutMs: policy.toolExecutionTimeoutMs,
+    toolRetryLimit: policy.toolRetryLimit,
+    heuristicFallbackEnabled: policy.heuristicFallbackEnabled,
+    persistPlanningMessages: policy.persistPlanningMessages,
+  };
+}
+
+function readSourceArray(value: unknown): ToolSourceRecord[] {
+  return Array.isArray(value) ? (value as ToolSourceRecord[]) : [];
+}
+
+function readStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 export function getAssistantDiagnostics(
@@ -72,6 +142,24 @@ export function getAssistantDiagnostics(
     typeof metadata.context === "object" && metadata.context
       ? (metadata.context as Record<string, unknown>)
       : null;
+  const turnId = getMessageTurnId(latestAssistant);
+  const relatedToolMessages = turnId
+    ? session.messages.filter(
+        (message) =>
+          message.role === "tool" &&
+          getMessageTurnId(message) === turnId &&
+          getMessageVisibility(message.metadata) === "visible",
+      )
+    : [];
+  const toolAttemptValues = relatedToolMessages
+    .map((message) => readNumber(message.metadata?.attempts))
+    .filter((value): value is number => value !== null);
+  const toolDurationValues = relatedToolMessages
+    .map((message) => readNumber(message.metadata?.durationMs))
+    .filter((value): value is number => value !== null);
+  const latestToolName =
+    [...relatedToolMessages].reverse().find((message) => message.toolName)?.toolName ??
+    null;
 
   return {
     provider: readString(metadata.provider) ?? session.modelProvider,
@@ -85,24 +173,113 @@ export function getAssistantDiagnostics(
     includedMessages: context ? readNumber(context.includedMessages) : null,
     trimmedCount: context ? readNumber(context.trimmedCount) : null,
     toolMessages: context ? readNumber(context.toolMessages) : null,
+    traceId: readString(metadata.traceId),
+    runtimePolicy: readRuntimePolicy(metadata.runtimePolicy),
+    toolAttemptCount:
+      toolAttemptValues.length > 0
+        ? toolAttemptValues.reduce((sum, value) => sum + value, 0)
+        : null,
+    maxToolDurationMs:
+      toolDurationValues.length > 0 ? Math.max(...toolDurationValues) : null,
+    latestToolName,
+    citationLabels: readStringArray(metadata.citationLabels),
+    citedSources: readSourceArray(metadata.citedSources),
   };
 }
 
-export function toolSummary(message: ChatMessage) {
-  if (!message.toolResults?.length) {
+function formatSourceLine(result: ToolResultRecord) {
+  if (!result.sources?.length) {
     return null;
   }
 
-  return message.toolResults.map((item) => item.result).join("\n");
+  return result.sources
+    .map((source) => {
+      const parts = [`- ${source.title}`];
+      if (source.citationLabel) {
+        parts.push(`（${source.citationLabel}）`);
+      }
+      if (source.href) {
+        parts.push(`(${source.href})`);
+      }
+      if (source.snippet) {
+        parts.push(`：${source.snippet}`);
+      }
+      return parts.join("");
+    })
+    .join("\n");
+}
+
+function buildAssistantCitationMarkdown(sources: ToolSourceRecord[]) {
+  if (sources.length === 0) {
+    return "";
+  }
+
+  const lines = sources.map((source) => {
+    const label = source.citationLabel
+      ? `**${source.citationLabel}** `
+      : `${CHAT_COPY.citationLabelPrefix} `;
+    const title = source.href ? `[${source.title}](${source.href})` : source.title;
+    const meta: string[] = [];
+
+    if (source.sourceType) {
+      meta.push(`类型：${source.sourceType}`);
+    }
+    if (typeof source.confidence === "number") {
+      meta.push(`置信度：${Math.round(source.confidence * 100)}%`);
+    }
+    if (source.updatedAt) {
+      meta.push(`更新时间：${source.updatedAt}`);
+    }
+
+    const description = source.snippet ? `\n   - ${source.snippet}` : "";
+    const metaLine = meta.length > 0 ? `\n   - ${meta.join(" · ")}` : "";
+
+    return `1. ${label}${title}${description}${metaLine}`;
+  });
+
+  return `\n\n---\n\n### ${CHAT_COPY.citedSourcesTitle}\n${lines.join("\n")}`;
+}
+
+export function getToolDetailsMarkdown(message: ChatMessage) {
+  const sections: string[] = [];
+
+  for (const result of message.toolResults ?? []) {
+    const summary = result.summary ?? result.result;
+
+    if (summary) {
+      sections.push(`### ${CHAT_COPY.toolStructuredSummary}\n${summary}`);
+    }
+
+    const sourceLines = formatSourceLine(result);
+    if (sourceLines) {
+      sections.push(`### ${CHAT_COPY.toolSourcesTitle}\n${sourceLines}`);
+    }
+
+    if (result.raw) {
+      sections.push(
+        `### ${CHAT_COPY.toolRawTitle}\n\`\`\`json\n${JSON.stringify(
+          result.raw,
+          null,
+          2,
+        )}\n\`\`\``,
+      );
+    }
+  }
+
+  return sections.join("\n\n");
 }
 
 export function shouldShowToolDetails(message: ChatMessage) {
-  const summary = toolSummary(message);
-  if (!summary) {
+  if (!message.toolResults?.length) {
     return false;
   }
 
-  return summary.trim() !== message.content.trim();
+  return message.toolResults.some(
+    (result) =>
+      Boolean(result.raw) ||
+      Boolean(result.sources?.length) ||
+      (result.summary ?? result.result).trim() !== message.content.trim(),
+  );
 }
 
 export function getToolBadgeLabel(toolName: string | null | undefined) {
@@ -225,6 +402,28 @@ function renderMessageContent(
   return message.content || "...";
 }
 
+function buildReadableMessageContent(
+  message: ChatMessage,
+  sendingStage: SendingStage,
+  streamingStatusLabel?: string | null,
+) {
+  const baseContent =
+    message.role === "tool"
+      ? getPrimaryToolResult(message)?.summary ?? message.content
+      : renderMessageContent(message, sendingStage, streamingStatusLabel);
+
+  if (message.role !== "assistant") {
+    return baseContent;
+  }
+
+  const citedSources = readSourceArray(message.metadata?.citedSources);
+  if (citedSources.length === 0) {
+    return baseContent;
+  }
+
+  return `${baseContent}${buildAssistantCitationMarkdown(citedSources)}`;
+}
+
 function getCodeLanguageLabel(className?: string) {
   const matched = className?.match(/language-([\w+-]+)/i)?.[1];
   return matched?.replace(/[^a-z0-9#+.-]/gi, "").toUpperCase() || "CODE";
@@ -286,7 +485,9 @@ function MarkdownBody({ content }: { content: string }) {
                     onClick={() => void handleCopyCode(blockId, codeContent)}
                     className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] font-medium tracking-[0.12em] text-stone-300 transition hover:border-white/20 hover:bg-white/5 hover:text-white"
                   >
-                    {copiedBlockId === blockId ? "已复制" : "复制代码"}
+                    {copiedBlockId === blockId
+                      ? CHAT_COPY.copiedCode
+                      : CHAT_COPY.copyCode}
                   </button>
                 </div>
                 <pre className="overflow-x-auto px-4 py-4 text-[13px] leading-6">
@@ -325,17 +526,17 @@ export function ReadableMessageBody({
 }) {
   const [expanded, setExpanded] = useState(false);
   const isStreaming = isStreamingMessage(message);
-  const baseContent = renderMessageContent(
+  const preferredContent = buildReadableMessageContent(
     message,
     sendingStage,
     streamingStatusLabel,
   );
   const shouldCollapse =
-    !isStreaming && message.role !== "tool" && baseContent.length > 900;
+    !isStreaming && message.role !== "tool" && preferredContent.length > 900;
   const visibleContent =
     shouldCollapse && !expanded
-      ? `${baseContent.slice(0, 900).trimEnd()}\n\n...`
-      : baseContent;
+      ? `${preferredContent.slice(0, 900).trimEnd()}\n\n...`
+      : preferredContent;
 
   return (
     <div
@@ -351,7 +552,7 @@ export function ReadableMessageBody({
           onClick={() => setExpanded((current) => !current)}
           className="mt-2 rounded-full border border-black/10 bg-white/80 px-3 py-1 text-xs font-medium text-stone-700 transition hover:border-stone-300 hover:bg-stone-50"
         >
-          {expanded ? "收起内容" : "展开全文"}
+          {expanded ? CHAT_COPY.collapseContent : CHAT_COPY.expandContent}
         </button>
       ) : null}
     </div>

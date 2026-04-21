@@ -32,3 +32,9 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Prefer `LF` line endings.
 - If terminal output looks garbled on Windows, do not use that output as replacement source text.
 - If JSX is already damaged, prefer whole-block rewrites over line-based patching.
+
+## Verification And Worklog Rules
+- Every code change must be self-verified before completion.
+- Default verification should include `npm run lint`.
+- When the change may affect build, routing, module resolution, or types, also run `npm run build`.
+- Record operations, verification results, and next steps in `docs/worklog.md` after each code change.

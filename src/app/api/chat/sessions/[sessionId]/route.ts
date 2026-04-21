@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { createApiErrorResponse } from "@/app/api/chat/route-utils";
+import {
+  createApiErrorResponse,
+  createNotFoundResponse,
+} from "@/app/api/chat/route-utils";
 import { getChatSession, patchChatSession } from "@/lib/chat-service";
 
 const patchSchema = z.object({
@@ -22,7 +25,7 @@ export async function GET(
     const session = await getChatSession(sessionId);
 
     if (!session) {
-      return NextResponse.json({ error: "未找到对应会话。" }, { status: 404 });
+      return createNotFoundResponse("未找到对应会话。");
     }
 
     return NextResponse.json(session);
@@ -41,7 +44,7 @@ export async function PATCH(
     const session = await patchChatSession(sessionId, payload);
 
     if (!session) {
-      return NextResponse.json({ error: "未找到对应会话。" }, { status: 404 });
+      return createNotFoundResponse("未找到对应会话。");
     }
 
     return NextResponse.json(session);

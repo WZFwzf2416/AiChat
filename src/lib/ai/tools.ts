@@ -1,11 +1,14 @@
 import { z } from "zod";
 
+import type { ToolCategory, ToolRiskLevel } from "@/lib/ai/runtime/shared";
 import { searchKnowledgeBase } from "@/lib/repositories/chat-repository";
 import { createId } from "@/lib/utils";
 import type {
   AgentStep,
   ChatMessageMetadata,
+  ToolDisplayData,
   ToolResultRecord,
+  ToolSourceRecord,
 } from "@/types/chat";
 
 type ToolExecution = {
@@ -20,9 +23,15 @@ type ToolExecution = {
   agentStep: AgentStep;
 };
 
-type ToolDefinition = {
+export type ToolDefinition = {
   name: string;
+  displayName: string;
   description: string;
+  category: ToolCategory;
+  riskLevel: ToolRiskLevel;
+  source: string;
+  timeoutMs?: number;
+  retryable?: boolean;
   parameters: z.ZodType<Record<string, unknown>>;
   execute: (
     args: Record<string, unknown>,
@@ -67,7 +76,6 @@ type OpenMeteoWeatherResponse = {
   timezone?: string;
   current?: {
     time?: string;
-    interval?: number;
     temperature_2m?: number;
     relative_humidity_2m?: number;
     apparent_temperature?: number;
@@ -111,9 +119,7 @@ const weatherDescriptions: Record<number, string> = {
 };
 
 function formatLocationLabel(result: OpenMeteoLocation) {
-  return [result.name, result.admin1, result.country]
-    .filter(Boolean)
-    .join(" / ");
+  return [result.name, result.admin1, result.country].filter(Boolean).join(" / ");
 }
 
 function formatWeatherCode(code?: number) {
@@ -140,9 +146,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 async function getLiveWeather(city: string, unit: "celsius" | "fahrenheit") {
-  const geocodingUrl = new URL(
-    "https://geocoding-api.open-meteo.com/v1/search",
-  );
+  const geocodingUrl = new URL("https://geocoding-api.open-meteo.com/v1/search");
   geocodingUrl.searchParams.set("name", city);
   geocodingUrl.searchParams.set("count", "1");
   geocodingUrl.searchParams.set("language", "zh");
@@ -183,13 +187,11 @@ async function getLiveWeather(city: string, unit: "celsius" | "fahrenheit") {
   );
   weatherUrl.searchParams.set("precipitation_unit", "mm");
 
-  const weather = await fetchJson<OpenMeteoWeatherResponse>(
-    weatherUrl.toString(),
-  );
+  const weather = await fetchJson<OpenMeteoWeatherResponse>(weatherUrl.toString());
   const current = weather.current;
 
   if (!current) {
-    throw new Error(`天气接口未返回当前天气：${city}`);
+    throw new Error(`天气接口没有返回当前天气：${city}`);
   }
 
   return {
@@ -208,39 +210,104 @@ async function getLiveWeather(city: string, unit: "celsius" | "fahrenheit") {
   };
 }
 
+function createToolResult(params: {
+  toolCallId: string;
+  toolName: string;
+  result: string;
+  summary?: string | null;
+  raw?: Record<string, unknown> | null;
+  display?: ToolDisplayData | null;
+  sources?: ToolSourceRecord[] | null;
+}): ToolResultRecord {
+  return {
+    toolCallId: params.toolCallId,
+    toolName: params.toolName,
+    result: params.result,
+    summary: params.summary ?? params.result,
+    raw: params.raw ?? null,
+    display: params.display ?? null,
+    sources: params.sources ?? null,
+  };
+}
+
+function createToolMessageMetadata(base: ChatMessageMetadata) {
+  return {
+    visibility: "visible" as const,
+    liveData: true,
+    ...base,
+  };
+}
+
 const tools: ToolDefinition[] = [
   {
     name: "get_current_time",
+    displayName: "当前时间",
     description: "获取指定 IANA 时区的当前时间。",
+    category: "system",
+    riskLevel: "low",
+    source: "runtime-clock",
+    timeoutMs: 2_000,
+    retryable: false,
     parameters: currentTimeSchema,
     async execute(args, toolCallId) {
       const parsed = currentTimeSchema.parse(args);
+      const now = new Date();
       const formatted = new Intl.DateTimeFormat("zh-CN", {
         dateStyle: "full",
         timeStyle: "medium",
         timeZone: parsed.timezone,
-      }).format(new Date());
-      const result = `${parsed.timezone} 当前时间：${formatted}`;
+      }).format(now);
+      const summary = `${parsed.timezone} 当前时间：${formatted}`;
+
+      const toolResult = createToolResult({
+        toolCallId,
+        toolName: "get_current_time",
+        result: summary,
+        raw: {
+          timezone: parsed.timezone,
+          iso: now.toISOString(),
+        },
+        display: {
+          kind: "time",
+          layout: "status",
+          title: "时间查询结果",
+          body: formatted,
+          items: [`时区：${parsed.timezone}`],
+          tone: "info",
+        },
+        sources: [
+          {
+            title: "Runtime Clock",
+            sourceType: "system",
+            confidence: 1,
+            citationLabel: "SYS-1",
+            originTool: "get_current_time",
+          },
+        ],
+      });
 
       return {
         toolMessage: {
           role: "tool",
-          content: result,
+          content: summary,
           toolCallId,
           toolName: "get_current_time",
-          toolResults: [{ toolCallId, toolName: "get_current_time", result }],
-          metadata: {
+          toolResults: [toolResult],
+          metadata: createToolMessageMetadata({
             timezone: parsed.timezone,
-            liveData: true,
-            visibility: "visible",
-          },
+            source: "runtime-clock",
+          }),
         },
         agentStep: {
           id: createId("step"),
           status: "completed",
           kind: "tool",
-          label: `查询时区时间：${parsed.timezone}`,
-          payload: { toolName: "get_current_time", arguments: parsed, result },
+          label: `查询时间：${parsed.timezone}`,
+          payload: {
+            toolName: "get_current_time",
+            arguments: parsed,
+            summary,
+          },
           createdAt: new Date().toISOString(),
         },
       };
@@ -248,7 +315,13 @@ const tools: ToolDefinition[] = [
   },
   {
     name: "get_weather_snapshot",
+    displayName: "实时天气",
     description: "获取指定城市的实时天气快照。",
+    category: "live-data",
+    riskLevel: "medium",
+    source: "open-meteo",
+    timeoutMs: 10_000,
+    retryable: true,
     parameters: weatherSchema,
     async execute(args, toolCallId) {
       const parsed = weatherSchema.parse(args);
@@ -262,7 +335,7 @@ const tools: ToolDefinition[] = [
         weather.units.wind_speed_10m ??
         (parsed.unit === "fahrenheit" ? "mph" : "km/h");
 
-      const result = [
+      const summary = [
         `${weather.locationLabel} 当前天气：${weather.weatherDescription}`,
         weather.temperature !== null
           ? `气温 ${weather.temperature}${temperatureUnit}`
@@ -277,40 +350,93 @@ const tools: ToolDefinition[] = [
           ? `降水 ${weather.precipitation}${precipitationUnit}`
           : null,
         weather.windSpeed !== null ? `风速 ${weather.windSpeed}${windUnit}` : null,
-        weather.windDirection !== null ? `风向 ${weather.windDirection}°` : null,
-        weather.observedAt ? `观测时间 ${weather.observedAt}` : null,
       ]
         .filter(Boolean)
         .join("，");
 
+      const toolResult = createToolResult({
+        toolCallId,
+        toolName: "get_weather_snapshot",
+        result: summary,
+        raw: {
+          requestedCity: parsed.city,
+          unit: parsed.unit,
+          ...weather,
+        },
+        display: {
+          kind: "weather",
+          layout: "metrics",
+          title: weather.locationLabel,
+          body: weather.weatherDescription,
+          metrics: [
+            weather.temperature !== null
+              ? { label: "气温", value: `${weather.temperature}${temperatureUnit}` }
+              : null,
+            weather.apparentTemperature !== null
+              ? {
+                  label: "体感",
+                  value: `${weather.apparentTemperature}${temperatureUnit}`,
+                }
+              : null,
+            weather.humidity !== null
+              ? { label: "湿度", value: `${weather.humidity}${humidityUnit}` }
+              : null,
+            weather.windSpeed !== null
+              ? { label: "风速", value: `${weather.windSpeed}${windUnit}` }
+              : null,
+          ].filter(Boolean) as Array<{ label: string; value: string }>,
+          items: [
+            weather.precipitation !== null
+              ? `降水：${weather.precipitation}${precipitationUnit}`
+              : null,
+            weather.windDirection !== null
+              ? `风向：${weather.windDirection}°`
+              : null,
+            weather.observedAt ? `观测时间：${weather.observedAt}` : null,
+            weather.timezone ? `时区：${weather.timezone}` : null,
+          ].filter(Boolean) as string[],
+          tone: "success",
+        },
+        sources: [
+          {
+            title: "Open-Meteo",
+            sourceType: "api",
+            href: "https://open-meteo.com/",
+            confidence: 0.98,
+            citationLabel: "WX-1",
+            originTool: "get_weather_snapshot",
+            meta: {
+              provider: "open-meteo",
+              requestedCity: parsed.city,
+            },
+          },
+        ],
+      });
+
       return {
         toolMessage: {
           role: "tool",
-          content: result,
+          content: summary,
           toolCallId,
           toolName: "get_weather_snapshot",
-          toolResults: [
-            { toolCallId, toolName: "get_weather_snapshot", result },
-          ],
-          metadata: {
+          toolResults: [toolResult],
+          metadata: createToolMessageMetadata({
             city: parsed.city,
             unit: parsed.unit,
-            liveData: true,
             source: "open-meteo",
             timezone: weather.timezone,
-            visibility: "visible",
-          },
+          }),
         },
         agentStep: {
           id: createId("step"),
           status: "completed",
           kind: "tool",
-          label: `查询实时天气：${parsed.city}`,
+          label: `查询天气：${parsed.city}`,
           payload: {
             toolName: "get_weather_snapshot",
             arguments: parsed,
             source: "open-meteo",
-            liveData: true,
+            summary,
           },
           createdAt: new Date().toISOString(),
         },
@@ -319,11 +445,23 @@ const tools: ToolDefinition[] = [
   },
   {
     name: "search_knowledge_base",
+    displayName: "知识库检索",
     description: "搜索当前应用维护的知识库记录，返回最相关的内容和来源。",
+    category: "knowledge",
+    riskLevel: "low",
+    source: "knowledge-repository",
+    timeoutMs: 3_000,
+    retryable: true,
     parameters: knowledgeSchema,
     async execute(args, toolCallId) {
       const parsed = knowledgeSchema.parse(args);
       const matches = await searchKnowledgeBase(parsed.query);
+
+      const summary =
+        matches.length > 0
+          ? `知识库命中 ${matches.length} 条与“${parsed.query}”相关的记录。`
+          : `知识库中没有命中与“${parsed.query}”相关的记录。`;
+
       const result =
         matches.length > 0
           ? matches
@@ -334,28 +472,65 @@ const tools: ToolDefinition[] = [
                   }\n内容：${entry.content}`,
               )
               .join("\n\n")
-          : `没有命中与“${parsed.query}”相关的知识库条目。`;
+          : summary;
+
+      const sources =
+        matches.length > 0
+          ? matches.map((entry, index) => ({
+              id: entry.id,
+              title: entry.title,
+              sourceType: "knowledge" as const,
+              snippet: entry.content.slice(0, 140),
+              tags: entry.tags,
+              confidence: Math.max(0.5, 1 - index * 0.12),
+              citationLabel: `KB-${index + 1}`,
+              originTool: "search_knowledge_base",
+              updatedAt:
+                typeof entry.updatedAt === "string"
+                  ? entry.updatedAt
+                  : entry.updatedAt.toISOString(),
+            }))
+          : null;
+
+      const toolResult = createToolResult({
+        toolCallId,
+        toolName: "search_knowledge_base",
+        result,
+        summary,
+        raw: {
+          query: parsed.query,
+          resultCount: matches.length,
+          matches,
+        },
+        display: {
+          kind: "knowledge",
+          layout: matches.length > 0 ? "list" : "status",
+          title: `知识库检索：${parsed.query}`,
+          body: summary,
+          items:
+            matches.length > 0
+              ? matches.map((entry) =>
+                  `${entry.title}${entry.tags.length ? ` · ${entry.tags.join("、")}` : ""}`,
+                )
+              : ["暂未命中结果"],
+          tone: matches.length > 0 ? "info" : "warning",
+        },
+        sources,
+      });
 
       return {
         toolMessage: {
           role: "tool",
-          content: result,
+          content: summary,
           toolCallId,
           toolName: "search_knowledge_base",
-          toolResults: [
-            { toolCallId, toolName: "search_knowledge_base", result },
-          ],
-          metadata: {
+          toolResults: [toolResult],
+          metadata: createToolMessageMetadata({
             query: parsed.query,
             resultCount: matches.length,
-            liveData: true,
-            visibility: "visible",
-            sources: matches.map((entry) => ({
-              id: entry.id,
-              title: entry.title,
-              tags: entry.tags,
-            })),
-          },
+            source: "knowledge-repository",
+            sources,
+          }),
         },
         agentStep: {
           id: createId("step"),
@@ -383,6 +558,40 @@ function createFailedToolExecution(
 ): ToolExecution {
   const message = error instanceof Error ? error.message : `工具 ${name} 执行失败。`;
   const result = `工具 ${name} 执行失败：${message}`;
+  const toolDefinition = tools.find((tool) => tool.name === name);
+
+  const toolResult = createToolResult({
+    toolCallId,
+    toolName: name,
+    result,
+    display: {
+      kind: "generic",
+      layout: "status",
+      title: "工具执行失败",
+      body: message,
+      tone: "danger",
+    },
+    raw: {
+      arguments: args,
+      errorMessage: message,
+    },
+    sources:
+      toolDefinition
+        ? [
+            {
+              title: toolDefinition.displayName,
+              sourceType: "tool",
+              confidence: 1,
+              citationLabel: "ERR-1",
+              originTool: name,
+              meta: {
+                source: toolDefinition.source,
+                category: toolDefinition.category,
+              },
+            },
+          ]
+        : null,
+  });
 
   return {
     toolMessage: {
@@ -390,7 +599,7 @@ function createFailedToolExecution(
       content: result,
       toolCallId,
       toolName: name,
-      toolResults: [{ toolCallId, toolName: name, result }],
+      toolResults: [toolResult],
       metadata: {
         error: true,
         visibility: "visible",
@@ -410,6 +619,23 @@ function createFailedToolExecution(
       createdAt: new Date().toISOString(),
     },
   };
+}
+
+export function getToolCatalog() {
+  return tools.map((tool) => ({
+    name: tool.name,
+    displayName: tool.displayName,
+    description: tool.description,
+    category: tool.category,
+    riskLevel: tool.riskLevel,
+    source: tool.source,
+    timeoutMs: tool.timeoutMs ?? null,
+    retryable: tool.retryable ?? false,
+  }));
+}
+
+export function getToolDefinition(name: string) {
+  return tools.find((item) => item.name === name) ?? null;
 }
 
 export function getOpenAITools() {

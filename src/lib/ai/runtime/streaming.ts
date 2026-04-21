@@ -1,20 +1,24 @@
 import OpenAI from "openai";
 
-import { chunkText } from "@/lib/utils";
-
 import {
   buildBaseMetadata,
+  collectCitedSources,
   extractAssistantText,
+  getPolicySnapshot,
+  type AgentRuntimePolicy,
   type CompletedTurn,
   type GenerateTurnInput,
   type PersistedTurnMessage,
 } from "@/lib/ai/runtime/shared";
+import { chunkText } from "@/lib/utils";
 import type { AgentStep } from "@/types/chat";
 
 function createFinalizingStep(params: {
   input: GenerateTurnInput;
   finishReason: string | null;
   usage: Record<string, unknown> | null;
+  policy: AgentRuntimePolicy;
+  citationLabels: string[];
 }) {
   return {
     id: `finalize_${params.input.turnId}`,
@@ -23,8 +27,11 @@ function createFinalizingStep(params: {
     label: "Agent 已完成最终答案整理。",
     payload: {
       turnId: params.input.turnId,
+      traceId: params.input.traceId,
       finishReason: params.finishReason,
       usage: params.usage,
+      citationLabels: params.citationLabels,
+      policy: getPolicySnapshot(params.policy),
     },
     createdAt: new Date().toISOString(),
   } satisfies AgentStep;
@@ -52,6 +59,7 @@ export async function streamAssistantCompletion(params: {
   targetLabel: string;
   input: GenerateTurnInput;
   startedAt: number;
+  policy: AgentRuntimePolicy;
   messages: Array<Record<string, unknown>>;
   persistedMessages: PersistedTurnMessage[];
   agentSteps: AgentStep[];
@@ -61,6 +69,7 @@ export async function streamAssistantCompletion(params: {
     targetLabel,
     input,
     startedAt,
+    policy,
     messages,
     persistedMessages,
     agentSteps,
@@ -112,11 +121,18 @@ export async function streamAssistantCompletion(params: {
 
         const safeAssistantText =
           assistantText.trim() || "本轮执行完成，但没有可展示的文本结果。";
+        const citedSources = collectCitedSources(persistedMessages);
+        const citationLabels = citedSources
+          .map((source) => source.citationLabel)
+          .filter((label): label is string => Boolean(label));
         const metadata = {
           ...buildBaseMetadata(input, Date.now() - startedAt),
           provider: targetLabel,
           finishReason,
           usage,
+          runtimePolicy: getPolicySnapshot(policy),
+          citedSources,
+          citationLabels,
           visibility: "visible" as const,
         };
 
@@ -136,6 +152,8 @@ export async function streamAssistantCompletion(params: {
               input,
               finishReason,
               usage,
+              policy,
+              citationLabels,
             }),
           ],
           metadata,

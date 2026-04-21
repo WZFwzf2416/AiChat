@@ -8,3 +8,7 @@ export function createApiErrorResponse(
   const message = error instanceof Error ? error.message : fallbackMessage;
   return NextResponse.json({ error: message }, { status });
 }
+
+export function createNotFoundResponse(message: string) {
+  return NextResponse.json({ error: message }, { status: 404 });
+}

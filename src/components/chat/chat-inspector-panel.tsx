@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { CHAT_COPY, getProviderDisplayLabel } from "@/components/chat/chat-copy";
 import type { AssistantDiagnostics } from "@/components/chat/message-content";
+import { getPrimaryToolResult } from "@/components/chat/tool-result-card";
 import { DEFAULT_AGENT_RUNTIME_POLICY } from "@/lib/ai/runtime/shared";
 import { cn, getMessageTurnId, getMessageVisibility } from "@/lib/utils";
 import type {
@@ -12,6 +13,7 @@ import type {
   ChatTurnSummary,
   KnowledgeEntry,
   KnowledgeEntryInput,
+  ToolSourceRecord,
 } from "@/types/chat";
 
 type ChatInspectorPanelProps = {
@@ -76,6 +78,18 @@ function getStepKindClasses(kind: string) {
   }
 }
 
+function formatVisibilityLabel(value: string) {
+  switch (value) {
+    case "debug":
+      return CHAT_COPY.debugVisibilityDebug;
+    case "internal":
+      return CHAT_COPY.debugVisibilityInternal;
+    case "visible":
+    default:
+      return CHAT_COPY.debugVisibilityVisible;
+  }
+}
+
 function summarizeStepPayload(step: AgentStep) {
   const payload = step.payload ?? {};
 
@@ -83,57 +97,138 @@ function summarizeStepPayload(step: AgentStep) {
     const toolNames = Array.isArray(payload.toolNames)
       ? payload.toolNames.join("、")
       : null;
-    const maxToolSteps =
-      typeof payload.maxToolSteps === "number" ? payload.maxToolSteps : null;
-    const heuristic = payload.heuristicFallbackEnabled;
 
     return [
       typeof payload.planningIteration === "number"
-        ? `第 ${payload.planningIteration + 1} 轮规划`
+        ? `第 ${payload.planningIteration + 1} 轮`
         : null,
       typeof payload.toolCalls === "number"
-        ? `计划工具数 ${payload.toolCalls}`
+        ? `计划工具 ${payload.toolCalls}`
         : null,
-      toolNames ? `工具 ${toolNames}` : null,
-      maxToolSteps ? `上限 ${maxToolSteps}` : null,
-      typeof heuristic === "boolean"
-        ? `兜底 ${heuristic ? "开启" : "关闭"}`
+      toolNames ? `工具：${toolNames}` : null,
+      typeof payload.truncatedToolCalls === "boolean" && payload.truncatedToolCalls
+        ? "工具调用已截断"
+        : null,
+      typeof payload.fallbackReason === "string"
+        ? `兜底：${payload.fallbackReason}`
         : null,
     ]
       .filter(Boolean)
-      .join(" 路 ");
+      .join(" · ");
   }
 
   if (step.kind === "tool") {
     return [
-      typeof payload.toolName === "string" ? payload.toolName : null,
-      payload.source ? `来源 ${String(payload.source)}` : null,
-      typeof payload.resultCount === "number"
-        ? `命中 ${payload.resultCount}`
+      typeof payload.toolName === "string" ? `工具：${payload.toolName}` : null,
+      typeof payload.toolSource === "string" ? `来源：${payload.toolSource}` : null,
+      typeof payload.toolRiskLevel === "string"
+        ? `风险：${payload.toolRiskLevel}`
         : null,
-      payload.liveData ? "实时数据" : null,
-      typeof payload.errorMessage === "string" ? payload.errorMessage : null,
+      typeof payload.attempts === "number"
+        ? `尝试 ${payload.attempts}/${payload.maxAttempts ?? payload.attempts}`
+        : null,
+      typeof payload.durationMs === "number"
+        ? `耗时 ${payload.durationMs} ms`
+        : null,
+      typeof payload.resultCount === "number" ? `命中 ${payload.resultCount}` : null,
+      typeof payload.lastErrorMessage === "string"
+        ? `错误：${payload.lastErrorMessage}`
+        : null,
     ]
       .filter(Boolean)
-      .join(" 路 ");
+      .join(" · ");
   }
 
   if (step.kind === "finalize") {
+    const usage =
+      payload.usage && typeof payload.usage === "object"
+        ? (payload.usage as Record<string, unknown>)
+        : null;
+    const citationLabels = Array.isArray(payload.citationLabels)
+      ? payload.citationLabels.join("、")
+      : null;
+
     return [
       typeof payload.finishReason === "string"
-        ? `finish ${payload.finishReason}`
+        ? `finish：${payload.finishReason}`
         : null,
-      payload.usage &&
-      typeof payload.usage === "object" &&
-      "total_tokens" in payload.usage
-        ? `tokens ${String(payload.usage.total_tokens)}`
+      typeof usage?.total_tokens === "number"
+        ? `tokens：${usage.total_tokens}`
         : null,
+      citationLabels ? `引用：${citationLabels}` : null,
     ]
       .filter(Boolean)
-      .join(" 路 ");
+      .join(" · ");
   }
 
   return "";
+}
+
+function MetricCard({
+  title,
+  value,
+  description,
+}: {
+  title: string;
+  value: string;
+  description?: string;
+}) {
+  return (
+    <div className="rounded-[20px] bg-stone-50 px-4 py-3">
+      <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{title}</p>
+      <p className="mt-2 font-medium text-stone-900">{value}</p>
+      {description ? (
+        <p className="mt-1 text-xs leading-6 text-stone-500">{description}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function CitationList({
+  sources,
+  emptyText,
+}: {
+  sources: ToolSourceRecord[];
+  emptyText: string;
+}) {
+  if (sources.length === 0) {
+    return (
+      <p className="rounded-[20px] border border-dashed border-black/10 bg-stone-50 px-4 py-3 text-sm leading-7 text-stone-600">
+        {emptyText}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {sources.map((source) => (
+        <div
+          key={`${source.title}-${source.id ?? source.href ?? source.citationLabel ?? "source"}`}
+          className="rounded-[20px] border border-black/5 bg-stone-50 px-4 py-3"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium text-stone-900">{source.title}</p>
+            {source.citationLabel ? (
+              <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] text-stone-600">
+                {source.citationLabel}
+              </span>
+            ) : null}
+          </div>
+          {source.snippet ? (
+            <p className="mt-2 text-sm leading-7 text-stone-600">{source.snippet}</p>
+          ) : null}
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-stone-500">
+            {source.sourceType ? <span>类型：{source.sourceType}</span> : null}
+            {source.originTool ? <span>来源工具：{source.originTool}</span> : null}
+            {typeof source.confidence === "number" ? (
+              <span>置信度：{Math.round(source.confidence * 100)}%</span>
+            ) : null}
+            {source.updatedAt ? <span>更新时间：{source.updatedAt}</span> : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function ChatInspectorPanel({
@@ -153,6 +248,21 @@ export function ChatInspectorPanel({
   const [knowledgeError, setKnowledgeError] = useState<string | null>(null);
 
   const latestTurn = turnSummaries.at(-1) ?? null;
+  const latestAssistantMessage = useMemo(() => {
+    if (!activeSession || !latestTurn) {
+      return null;
+    }
+
+    return [...activeSession.messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" &&
+          getMessageTurnId(message) === latestTurn.id &&
+          getMessageVisibility(message.metadata) === "visible",
+      );
+  }, [activeSession, latestTurn]);
+
   const latestDebugMessages = useMemo(() => {
     if (!activeSession || !latestTurn) {
       return [];
@@ -164,6 +274,46 @@ export function ChatInspectorPanel({
         getMessageVisibility(message.metadata) !== "visible",
     );
   }, [activeSession, latestTurn]);
+
+  const latestToolResults = useMemo(() => {
+    if (!activeSession || !latestTurn) {
+      return [];
+    }
+
+    return activeSession.messages
+      .filter(
+        (message) =>
+          message.role === "tool" &&
+          getMessageTurnId(message) === latestTurn.id &&
+          getMessageVisibility(message.metadata) === "visible",
+      )
+      .map((message) => ({
+        messageId: message.id,
+        toolName: message.toolName ?? "unknown",
+        result: getPrimaryToolResult(message),
+      }))
+      .filter(
+        (
+          item,
+        ): item is {
+          messageId: string;
+          toolName: string;
+          result: NonNullable<typeof item.result>;
+        } => Boolean(item.result),
+      );
+  }, [activeSession, latestTurn]);
+
+  const citedSources =
+    diagnostics?.citedSources ??
+    (Array.isArray(latestAssistantMessage?.metadata?.citedSources)
+      ? latestAssistantMessage.metadata.citedSources
+      : []);
+  const citationLabels =
+    diagnostics?.citationLabels ??
+    (Array.isArray(latestAssistantMessage?.metadata?.citationLabels)
+      ? latestAssistantMessage.metadata.citationLabels
+      : []);
+  const runtimePolicy = diagnostics?.runtimePolicy ?? DEFAULT_AGENT_RUNTIME_POLICY;
 
   async function handleCreateKnowledgeEntry() {
     const title = knowledgeTitle.trim();
@@ -179,6 +329,7 @@ export function ChatInspectorPanel({
     }
 
     setKnowledgeError(null);
+
     try {
       await onCreateKnowledgeEntry({ title, content, tags });
       setKnowledgeTitle("");
@@ -210,24 +361,27 @@ export function ChatInspectorPanel({
           {CHAT_COPY.runtimePolicyTitle}
         </p>
         <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-          <div className="rounded-[20px] bg-stone-50 px-4 py-3">
-            <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
-              {CHAT_COPY.runtimePolicySteps}
-            </p>
-            <p className="mt-2 font-medium text-stone-900">
-              {DEFAULT_AGENT_RUNTIME_POLICY.maxToolSteps}
-            </p>
-          </div>
-          <div className="rounded-[20px] bg-stone-50 px-4 py-3">
-            <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
-              {CHAT_COPY.runtimePolicyFallback}
-            </p>
-            <p className="mt-2 font-medium text-stone-900">
-              {DEFAULT_AGENT_RUNTIME_POLICY.heuristicFallbackEnabled
+          <MetricCard
+            title={CHAT_COPY.runtimePolicySteps}
+            value={String(runtimePolicy.maxPlanningIterations)}
+          />
+          <MetricCard
+            title={CHAT_COPY.runtimePolicyToolLimit}
+            value={String(runtimePolicy.maxToolCallsPerIteration)}
+          />
+          <MetricCard
+            title={CHAT_COPY.runtimePolicyTimeout}
+            value={`${runtimePolicy.toolExecutionTimeoutMs} ms`}
+          />
+          <MetricCard
+            title={CHAT_COPY.runtimePolicyRetry}
+            value={String(runtimePolicy.toolRetryLimit)}
+            description={`${CHAT_COPY.runtimePolicyFallback}：${
+              runtimePolicy.heuristicFallbackEnabled
                 ? CHAT_COPY.runtimePolicyFallbackOn
-                : CHAT_COPY.runtimePolicyFallbackOff}
-            </p>
-          </div>
+                : CHAT_COPY.runtimePolicyFallbackOff
+            }`}
+          />
         </div>
       </div>
 
@@ -237,56 +391,66 @@ export function ChatInspectorPanel({
         </p>
         {diagnostics ? (
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            <div className="rounded-[20px] bg-stone-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
-                {CHAT_COPY.diagnosticsProvider}
-              </p>
-              <p className="mt-2 font-medium text-stone-900">
-                {getProviderDisplayLabel(diagnostics.provider, diagnostics.model)}
-              </p>
-            </div>
-            <div className="rounded-[20px] bg-stone-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
-                {CHAT_COPY.diagnosticsModel}
-              </p>
-              <p className="mt-2 font-medium text-stone-900">
-                {diagnostics.model}
-              </p>
-            </div>
-            <div className="rounded-[20px] bg-stone-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
-                {CHAT_COPY.diagnosticsDuration}
-              </p>
-              <p className="mt-2 font-medium text-stone-900">
-                {diagnostics.durationMs !== null
+            <MetricCard
+              title={CHAT_COPY.diagnosticsProvider}
+              value={getProviderDisplayLabel(diagnostics.provider, diagnostics.model)}
+            />
+            <MetricCard title={CHAT_COPY.diagnosticsModel} value={diagnostics.model} />
+            <MetricCard
+              title={CHAT_COPY.diagnosticsDuration}
+              value={
+                diagnostics.durationMs !== null
                   ? `${diagnostics.durationMs} ms`
-                  : CHAT_COPY.diagnosticsUnavailable}
-              </p>
-            </div>
-            <div className="rounded-[20px] bg-stone-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
-                {CHAT_COPY.diagnosticsFinishReason}
-              </p>
-              <p className="mt-2 font-medium text-stone-900">
-                {diagnostics.finishReason ?? CHAT_COPY.diagnosticsUnavailable}
-              </p>
-            </div>
-            <div className="rounded-[20px] bg-stone-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
-                {CHAT_COPY.diagnosticsTotalTokens}
-              </p>
-              <p className="mt-2 font-medium text-stone-900">
-                {diagnostics.totalTokens ?? CHAT_COPY.diagnosticsUnavailable}
-              </p>
-            </div>
-            <div className="rounded-[20px] bg-stone-50 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
-                {CHAT_COPY.diagnosticsTrimmedCount}
-              </p>
-              <p className="mt-2 font-medium text-stone-900">
-                {diagnostics.trimmedCount ?? 0}
-              </p>
-            </div>
+                  : CHAT_COPY.diagnosticsUnavailable
+              }
+            />
+            <MetricCard
+              title={CHAT_COPY.diagnosticsFinishReason}
+              value={diagnostics.finishReason ?? CHAT_COPY.diagnosticsUnavailable}
+            />
+            <MetricCard
+              title={CHAT_COPY.diagnosticsTotalTokens}
+              value={
+                diagnostics.totalTokens !== null
+                  ? String(diagnostics.totalTokens)
+                  : CHAT_COPY.diagnosticsUnavailable
+              }
+              description={
+                diagnostics.promptTokens !== null ||
+                diagnostics.completionTokens !== null
+                  ? `${CHAT_COPY.diagnosticsPromptTokens} ${
+                      diagnostics.promptTokens ?? "-"
+                    } / ${CHAT_COPY.diagnosticsCompletionTokens} ${
+                      diagnostics.completionTokens ?? "-"
+                    }`
+                  : undefined
+              }
+            />
+            <MetricCard
+              title={CHAT_COPY.diagnosticsTraceId}
+              value={diagnostics.traceId ?? CHAT_COPY.traceUnavailable}
+            />
+            <MetricCard
+              title={CHAT_COPY.diagnosticsToolAttempts}
+              value={
+                diagnostics.toolAttemptCount !== null
+                  ? String(diagnostics.toolAttemptCount)
+                  : CHAT_COPY.diagnosticsUnavailable
+              }
+              description={
+                diagnostics.latestToolName
+                  ? `最近工具：${diagnostics.latestToolName}`
+                  : undefined
+              }
+            />
+            <MetricCard
+              title={CHAT_COPY.diagnosticsToolLatency}
+              value={
+                diagnostics.maxToolDurationMs !== null
+                  ? `${diagnostics.maxToolDurationMs} ms`
+                  : CHAT_COPY.diagnosticsUnavailable
+              }
+            />
             <div className="col-span-2 rounded-[20px] bg-stone-50 px-4 py-3 text-stone-600">
               <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
                 {CHAT_COPY.diagnosticsContext}
@@ -294,17 +458,8 @@ export function ChatInspectorPanel({
               <p className="mt-2 leading-7">
                 当前纳入 {diagnostics.includedMessages ?? 0} /{" "}
                 {diagnostics.totalMessages ?? 0} 条消息，其中工具消息{" "}
-                {diagnostics.toolMessages ?? 0} 条。
+                {diagnostics.toolMessages ?? 0} 条，裁剪 {diagnostics.trimmedCount ?? 0} 条。
               </p>
-              {diagnostics.promptTokens !== null ||
-              diagnostics.completionTokens !== null ? (
-                <p className="mt-2 leading-7">
-                  {CHAT_COPY.diagnosticsPromptTokens}：{diagnostics.promptTokens ?? "-"}
-                  {"，"}
-                  {CHAT_COPY.diagnosticsCompletionTokens}：
-                  {diagnostics.completionTokens ?? "-"}
-                </p>
-              ) : null}
             </div>
           </div>
         ) : (
@@ -312,6 +467,23 @@ export function ChatInspectorPanel({
             {CHAT_COPY.diagnosticsEmpty}
           </p>
         )}
+      </div>
+
+      <div className="rounded-[28px] border border-black/5 bg-white p-5">
+        <p className="text-xs uppercase tracking-[0.28em] text-amber-700">
+          {CHAT_COPY.diagnosticsCitations}
+        </p>
+        {citationLabels.length > 0 ? (
+          <p className="mt-4 text-xs leading-6 text-stone-500">
+            {citationLabels.join("、")}
+          </p>
+        ) : null}
+        <div className="mt-4">
+          <CitationList
+            sources={citedSources}
+            emptyText={CHAT_COPY.citedSourcesEmpty}
+          />
+        </div>
       </div>
 
       <div className="rounded-[28px] border border-black/5 bg-white p-5">
@@ -327,9 +499,7 @@ export function ChatInspectorPanel({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-medium text-stone-900">
-                    {index === 0
-                      ? CHAT_COPY.latestTurnLabel
-                      : formatTimestamp(turn.createdAt)}
+                    {index === 0 ? CHAT_COPY.latestTurnLabel : formatTimestamp(turn.createdAt)}
                   </p>
                   <p className="mt-1 text-sm leading-6 text-stone-600">
                     {turn.userContentPreview || "这一轮没有用户消息摘要。"}
@@ -375,7 +545,7 @@ export function ChatInspectorPanel({
           {CHAT_COPY.agentTrail}
         </p>
         <div className="mt-4 space-y-3">
-          {(activeSession?.agentSteps ?? []).slice(-8).reverse().map((step) => {
+          {(activeSession?.agentSteps ?? []).slice(-10).reverse().map((step) => {
             const payloadSummary = summarizeStepPayload(step);
 
             return (
@@ -385,13 +555,9 @@ export function ChatInspectorPanel({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium text-stone-900">
-                      {step.label}
-                    </p>
+                    <p className="text-sm font-medium text-stone-900">{step.label}</p>
                     {payloadSummary ? (
-                      <p className="mt-1 text-xs leading-6 text-stone-500">
-                        {payloadSummary}
-                      </p>
+                      <p className="mt-1 text-xs leading-6 text-stone-500">{payloadSummary}</p>
                     ) : null}
                   </div>
                   <span
@@ -419,6 +585,44 @@ export function ChatInspectorPanel({
 
       <div className="rounded-[28px] border border-black/5 bg-white p-5">
         <p className="text-xs uppercase tracking-[0.28em] text-amber-700">
+          {CHAT_COPY.toolStructuredSummary}
+        </p>
+        <div className="mt-4 space-y-3">
+          {latestToolResults.map(({ messageId, toolName, result }) => (
+            <div
+              key={messageId}
+              className="rounded-[20px] border border-black/5 bg-stone-50 px-4 py-3"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-stone-900">{toolName}</p>
+                  <p className="mt-1 text-sm leading-6 text-stone-600">
+                    {result.summary ?? result.result}
+                  </p>
+                </div>
+                {result.display?.layout ? (
+                  <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs text-stone-600">
+                    {result.display.layout}
+                  </span>
+                ) : null}
+              </div>
+              {result.sources?.length ? (
+                <div className="mt-2 text-xs leading-6 text-stone-500">
+                  来源：{result.sources.map((source) => source.title).join("、")}
+                </div>
+              ) : null}
+            </div>
+          ))}
+          {latestToolResults.length === 0 ? (
+            <p className="rounded-[20px] border border-dashed border-black/10 bg-stone-50 px-4 py-3 text-sm leading-7 text-stone-600">
+              {CHAT_COPY.toolDisplayFallback}
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="rounded-[28px] border border-black/5 bg-white p-5">
+        <p className="text-xs uppercase tracking-[0.28em] text-amber-700">
           {CHAT_COPY.debugMessagesTitle}
         </p>
         <div className="mt-4 space-y-3">
@@ -428,11 +632,10 @@ export function ChatInspectorPanel({
               className="rounded-[20px] border border-dashed border-black/10 bg-stone-50 px-4 py-3"
             >
               <p className="text-xs uppercase tracking-[0.18em] text-stone-500">
-                {message.role} {CHAT_COPY.stepSeparator} {getMessageVisibility(message.metadata)}
+                {message.role} {CHAT_COPY.stepSeparator}{" "}
+                {formatVisibilityLabel(getMessageVisibility(message.metadata))}
               </p>
-              <p className="mt-2 text-sm leading-7 text-stone-700">
-                {message.content}
-              </p>
+              <p className="mt-2 text-sm leading-7 text-stone-700">{message.content}</p>
             </div>
           ))}
           {latestDebugMessages.length === 0 ? (
@@ -469,9 +672,7 @@ export function ChatInspectorPanel({
             placeholder={CHAT_COPY.knowledgeTagsPlaceholder}
             className="w-full rounded-[18px] border border-black/10 bg-stone-50 px-4 py-3 text-sm outline-none"
           />
-          {knowledgeError ? (
-            <p className="text-sm text-rose-600">{knowledgeError}</p>
-          ) : null}
+          {knowledgeError ? <p className="text-sm text-rose-600">{knowledgeError}</p> : null}
           <button
             type="button"
             onClick={() => {
@@ -480,9 +681,7 @@ export function ChatInspectorPanel({
             disabled={isSavingKnowledgeEntry}
             className="rounded-full bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-400"
           >
-            {isSavingKnowledgeEntry
-              ? CHAT_COPY.knowledgeSaving
-              : CHAT_COPY.knowledgeCreate}
+            {isSavingKnowledgeEntry ? CHAT_COPY.knowledgeSaving : CHAT_COPY.knowledgeCreate}
           </button>
         </div>
         <div className="mt-5 space-y-3">

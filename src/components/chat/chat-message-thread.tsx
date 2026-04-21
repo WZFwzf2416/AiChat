@@ -7,11 +7,12 @@ import {
   ReadableMessageBody,
   getToolBadgeClasses,
   getToolBadgeLabel,
+  getToolDetailsMarkdown,
   isToolErrorMessage,
   shouldShowToolDetails,
-  toolSummary,
   type SendingStage,
 } from "@/components/chat/message-content";
+import { ToolResultCollection } from "@/components/chat/tool-result-card";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
 
@@ -32,7 +33,7 @@ type ChatMessageThreadProps = {
 
 function getRoleLabel(message: ChatMessage) {
   if (message.role === "tool") {
-    return `工具 ${CHAT_COPY.stepSeparator} ${message.toolName ?? "未知工具"}`;
+    return `工具 · ${message.toolName ?? "未知工具"}`;
   }
 
   if (message.role === "user") {
@@ -148,6 +149,8 @@ export function ChatMessageThread({
                 </div>
               ) : null}
 
+              {message.role === "tool" ? <ToolResultCollection message={message} /> : null}
+
               <ReadableMessageBody
                 message={message}
                 sendingStage={sendingStage}
@@ -163,7 +166,7 @@ export function ChatMessageThread({
                     <ReadableMessageBody
                       message={{
                         ...message,
-                        content: toolSummary(message) ?? "",
+                        content: getToolDetailsMarkdown(message),
                       }}
                       sendingStage={null}
                       streamingStatusLabel={null}

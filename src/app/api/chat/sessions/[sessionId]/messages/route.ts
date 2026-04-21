@@ -30,6 +30,7 @@ export async function POST(
             sendEvent("stage", {
               type: "stage",
               stage: result.initialStage,
+              traceId: result.traceId,
             }),
           );
 
@@ -48,6 +49,7 @@ export async function POST(
                 sendEvent("stage", {
                   type: "stage",
                   stage: "finalizing",
+                  traceId: result.traceId,
                 }),
               );
               hasSentFinalizing = true;
@@ -65,6 +67,7 @@ export async function POST(
           controller.enqueue(
             sendEvent("complete", {
               type: "complete",
+              traceId: result.traceId,
             }),
           );
           controller.close();
@@ -75,6 +78,7 @@ export async function POST(
             sendEvent("error", {
               type: "error",
               message,
+              traceId: result.traceId,
             }),
           );
           controller.close();
@@ -89,6 +93,7 @@ export async function POST(
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-store",
         Connection: "keep-alive",
+        "X-Agent-Trace-Id": result.traceId,
       },
     });
   } catch (error) {

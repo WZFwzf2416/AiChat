@@ -2,16 +2,6 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/models";
-import { summarizeTitle } from "@/lib/utils";
-import type {
-  ChatBootstrapPayload,
-  ChatMessageMetadata,
-  ChatSession,
-  KnowledgeEntry,
-  KnowledgeEntryInput,
-  ModelConfig,
-  SessionSettingsPatch,
-} from "@/types/chat";
 import {
   createRuntimeStatus,
   KNOWLEDGE_SEED,
@@ -22,16 +12,60 @@ import {
   STARTER_TITLE,
   type PersistedAssistantTurn,
 } from "@/lib/repositories/chat-repository-shared";
+import { summarizeTitle } from "@/lib/utils";
+import type {
+  ChatBootstrapPayload,
+  ChatMessageMetadata,
+  ChatSession,
+  KnowledgeEntry,
+  KnowledgeEntryInput,
+  ModelConfig,
+  SearchableKnowledgeEntry,
+  SessionSettingsPatch,
+} from "@/types/chat";
 
-export async function ensureDatabaseSeed() {
+function assertPrismaClient() {
   if (!prisma) {
-    return;
+    throw new Error("Prisma client 不可用。");
   }
 
+  return prisma;
+}
+
+function mapSessionRecord(session: {
+  id: string;
+  title: string;
+  modelProvider: ChatSession["modelProvider"];
+  modelId: string;
+  temperature: number;
+  maxOutputTokens: number;
+  systemPrompt: string;
+  createdAt: Date;
+  updatedAt: Date;
+  messages: Parameters<typeof normalizeMessage>[0][];
+  agentSteps: Parameters<typeof normalizeAgentStep>[0][];
+}): ChatSession {
+  return {
+    id: session.id,
+    title: session.title,
+    modelProvider: session.modelProvider,
+    modelId: session.modelId,
+    temperature: session.temperature,
+    maxOutputTokens: session.maxOutputTokens,
+    systemPrompt: session.systemPrompt,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString(),
+    messages: session.messages.map(normalizeMessage),
+    agentSteps: session.agentSteps.map(normalizeAgentStep),
+  };
+}
+
+export async function ensureDatabaseSeed() {
+  const client = assertPrismaClient();
   const desiredConfigs = (await import("@/lib/models")).getAvailableModelConfigs();
   const desiredConfigIds = desiredConfigs.map((config) => config.id);
 
-  await prisma.modelConfig.deleteMany({
+  await client.modelConfig.deleteMany({
     where: {
       id: {
         notIn: desiredConfigIds,
@@ -40,7 +74,7 @@ export async function ensureDatabaseSeed() {
   });
 
   for (const config of desiredConfigs) {
-    await prisma.modelConfig.upsert({
+    await client.modelConfig.upsert({
       where: { id: config.id },
       update: {
         provider: config.provider,
@@ -64,9 +98,9 @@ export async function ensureDatabaseSeed() {
     });
   }
 
-  const knowledgeCount = await prisma.knowledgeEntry.count();
+  const knowledgeCount = await client.knowledgeEntry.count();
   if (knowledgeCount === 0) {
-    await prisma.knowledgeEntry.createMany({
+    await client.knowledgeEntry.createMany({
       data: KNOWLEDGE_SEED,
     });
   }
@@ -75,11 +109,8 @@ export async function ensureDatabaseSeed() {
 export async function normalizeDatabaseSession(
   sessionId: string,
 ): Promise<ChatSession | null> {
-  if (!prisma) {
-    return null;
-  }
-
-  const session = await prisma.chatSession.findUnique({
+  const client = assertPrismaClient();
+  const session = await client.chatSession.findUnique({
     where: { id: sessionId },
     include: {
       messages: { orderBy: { createdAt: "asc" } },
@@ -91,26 +122,11 @@ export async function normalizeDatabaseSession(
     return null;
   }
 
-  return {
-    id: session.id,
-    title: session.title,
-    modelProvider: session.modelProvider,
-    modelId: session.modelId,
-    temperature: session.temperature,
-    maxOutputTokens: session.maxOutputTokens,
-    systemPrompt: session.systemPrompt,
-    createdAt: session.createdAt.toISOString(),
-    updatedAt: session.updatedAt.toISOString(),
-    messages: session.messages.map(normalizeMessage),
-    agentSteps: session.agentSteps.map(normalizeAgentStep),
-  };
+  return mapSessionRecord(session);
 }
 
 export async function getPrismaBootstrap(): Promise<ChatBootstrapPayload> {
-  if (!prisma) {
-    throw new Error("Prisma client 不可用。");
-  }
-
+  const client = assertPrismaClient();
   await ensureDatabaseSeed();
 
   const {
@@ -122,12 +138,12 @@ export async function getPrismaBootstrap(): Promise<ChatBootstrapPayload> {
   const desiredConfigIds = getAvailableModelConfigs().map((config) => config.id);
 
   const [modelConfigs, sessionsCount, knowledgeEntries] = await Promise.all([
-    prisma.modelConfig.findMany({
+    client.modelConfig.findMany({
       where: { id: { in: desiredConfigIds } },
       orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
     }),
-    prisma.chatSession.count(),
-    prisma.knowledgeEntry.findMany({
+    client.chatSession.count(),
+    client.knowledgeEntry.findMany({
       orderBy: { updatedAt: "desc" },
       take: 12,
     }),
@@ -137,7 +153,8 @@ export async function getPrismaBootstrap(): Promise<ChatBootstrapPayload> {
     const suggested = getDefaultModelConfig(
       getSuggestedSessionProvider(runtime.compatibleApiConfigured),
     );
-    await prisma.chatSession.create({
+
+    await client.chatSession.create({
       data: {
         title: STARTER_TITLE,
         modelConfigId: suggested.id,
@@ -158,7 +175,7 @@ export async function getPrismaBootstrap(): Promise<ChatBootstrapPayload> {
     });
   }
 
-  const sessions = await prisma.chatSession.findMany({
+  const sessions = await client.chatSession.findMany({
     include: {
       messages: { orderBy: { createdAt: "asc" } },
       agentSteps: { orderBy: { createdAt: "asc" } },
@@ -167,19 +184,7 @@ export async function getPrismaBootstrap(): Promise<ChatBootstrapPayload> {
   });
 
   return {
-    sessions: sessions.map((session) => ({
-      id: session.id,
-      title: session.title,
-      modelProvider: session.modelProvider,
-      modelId: session.modelId,
-      temperature: session.temperature,
-      maxOutputTokens: session.maxOutputTokens,
-      systemPrompt: session.systemPrompt,
-      createdAt: session.createdAt.toISOString(),
-      updatedAt: session.updatedAt.toISOString(),
-      messages: session.messages.map(normalizeMessage),
-      agentSteps: session.agentSteps.map(normalizeAgentStep),
-    })),
+    sessions: sessions.map(mapSessionRecord),
     modelConfigs: modelConfigs.map((config) => ({
       id: config.id,
       provider: config.provider,
@@ -196,11 +201,8 @@ export async function getPrismaBootstrap(): Promise<ChatBootstrapPayload> {
 }
 
 export async function createPrismaSession(defaultConfig: ModelConfig) {
-  if (!prisma) {
-    throw new Error("Prisma client 不可用。");
-  }
-
-  const session = await prisma.chatSession.create({
+  const client = assertPrismaClient();
+  const session = await client.chatSession.create({
     data: {
       title: "新会话",
       modelConfigId: defaultConfig.id,
@@ -224,11 +226,9 @@ export async function savePrismaUserMessage(
   content: string,
   metadata?: ChatMessageMetadata,
 ) {
-  if (!prisma) {
-    throw new Error("Prisma client 不可用。");
-  }
+  const client = assertPrismaClient();
 
-  await prisma.message.create({
+  await client.message.create({
     data: {
       sessionId,
       role: "USER",
@@ -237,13 +237,13 @@ export async function savePrismaUserMessage(
     },
   });
 
-  const session = await prisma.chatSession.findUnique({
+  const session = await client.chatSession.findUnique({
     where: { id: sessionId },
     select: { messages: { where: { role: "USER" }, select: { id: true } } },
   });
 
   if (session && session.messages.length === 1) {
-    await prisma.chatSession.update({
+    await client.chatSession.update({
       where: { id: sessionId },
       data: { title: summarizeTitle(content) },
     });
@@ -282,11 +282,9 @@ export async function updatePrismaSessionSettings(
   patch: SessionSettingsPatch,
   appliedConfig?: ModelConfig | null,
 ) {
-  if (!prisma) {
-    throw new Error("Prisma client 不可用。");
-  }
+  const client = assertPrismaClient();
 
-  await prisma.chatSession.update({
+  await client.chatSession.update({
     where: { id: sessionId },
     data: {
       modelConfigId: patch.modelConfigId,
@@ -305,11 +303,9 @@ export async function savePrismaAssistantTurn(
   sessionId: string,
   turn: PersistedAssistantTurn,
 ) {
-  if (!prisma) {
-    throw new Error("Prisma client 不可用。");
-  }
+  const client = assertPrismaClient();
 
-  await prisma.$transaction(async (tx) => {
+  await client.$transaction(async (tx) => {
     for (const message of turn.messages) {
       await tx.message.create({
         data: {
@@ -354,12 +350,11 @@ export async function savePrismaAssistantTurn(
   return normalizeDatabaseSession(sessionId);
 }
 
-export async function searchPrismaKnowledgeBase(query: string) {
-  if (!prisma) {
-    throw new Error("Prisma client 不可用。");
-  }
-
-  const entries = await prisma.knowledgeEntry.findMany({
+export async function searchPrismaKnowledgeBase(
+  query: string,
+): Promise<SearchableKnowledgeEntry[]> {
+  const client = assertPrismaClient();
+  const entries = await client.knowledgeEntry.findMany({
     orderBy: { updatedAt: "desc" },
     take: 50,
   });
@@ -368,11 +363,8 @@ export async function searchPrismaKnowledgeBase(query: string) {
 }
 
 export async function listPrismaKnowledgeEntries() {
-  if (!prisma) {
-    throw new Error("Prisma client 不可用。");
-  }
-
-  const entries = await prisma.knowledgeEntry.findMany({
+  const client = assertPrismaClient();
+  const entries = await client.knowledgeEntry.findMany({
     orderBy: { updatedAt: "desc" },
     take: 20,
   });
@@ -383,11 +375,8 @@ export async function listPrismaKnowledgeEntries() {
 export async function createPrismaKnowledgeEntry(
   input: KnowledgeEntryInput,
 ): Promise<KnowledgeEntry> {
-  if (!prisma) {
-    throw new Error("Prisma client 不可用。");
-  }
-
-  const entry = await prisma.knowledgeEntry.create({
+  const client = assertPrismaClient();
+  const entry = await client.knowledgeEntry.create({
     data: {
       title: input.title.trim(),
       content: input.content.trim(),

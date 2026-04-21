@@ -11,6 +11,7 @@ import type {
   KnowledgeEntry,
   KnowledgeEntryInput,
   ModelConfig,
+  SearchableKnowledgeEntry,
   SessionSettingsPatch,
 } from "@/types/chat";
 import {
@@ -155,7 +156,9 @@ export function saveMemoryAssistantTurn(
   return session;
 }
 
-export function searchMemoryKnowledgeBase(query: string) {
+export function searchMemoryKnowledgeBase(
+  query: string,
+): SearchableKnowledgeEntry[] {
   return rankKnowledgeEntries(getMemoryStore().knowledgeEntries, query);
 }
 

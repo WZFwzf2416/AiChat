@@ -10,6 +10,7 @@ import {
   buildDebugMetadata,
   DEFAULT_AGENT_RUNTIME_POLICY,
   extractAssistantText,
+  getPolicySnapshot,
   type AgentRuntimePolicy,
   type DirectToolIntent,
   type GenerateTurnInput,
@@ -20,7 +21,7 @@ import {
 
 function normalizeIntentText(value: string) {
   return value
-    .replace(/[，。！；：“”‘’（）()?]/g, " ")
+    .replace(/[，。！；：、“”‘’（）()?]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -68,11 +69,7 @@ function extractWeatherCity(content: string) {
 function extractTimezone(content: string) {
   const normalized = content.toLowerCase();
 
-  if (
-    content.includes("北京") ||
-    content.includes("上海") ||
-    content.includes("中国")
-  ) {
+  if (content.includes("北京") || content.includes("上海") || content.includes("中国")) {
     return "Asia/Shanghai";
   }
 
@@ -144,6 +141,7 @@ export function inferDirectToolIntent(
     lower.includes("time")
   ) {
     const timezone = extractTimezone(originalContent);
+
     return {
       toolName: "get_current_time",
       args: { timezone },
@@ -159,6 +157,7 @@ export function inferDirectToolIntent(
     lower.includes("weather")
   ) {
     const city = extractWeatherCity(originalContent);
+
     return {
       toolName: "get_weather_snapshot",
       args: { city, unit: "celsius" },
@@ -190,6 +189,7 @@ function createPlanningStep(params: {
     payload: {
       ...(params.payload ?? {}),
       turnId: params.input.turnId,
+      traceId: params.input.traceId,
       planningIteration: params.index,
     },
     createdAt: new Date().toISOString(),
@@ -259,7 +259,11 @@ export async function prepareToolContext(params: {
   let usedTool = false;
   let initialStage: PreparedToolContext["initialStage"] = "thinking";
 
-  for (let stepIndex = 0; stepIndex < policy.maxToolSteps; stepIndex += 1) {
+  for (
+    let stepIndex = 0;
+    stepIndex < policy.maxPlanningIterations;
+    stepIndex += 1
+  ) {
     const planningStep = await requestPlanningStep({
       client,
       input,
@@ -268,13 +272,19 @@ export async function prepareToolContext(params: {
       stepIndex,
     });
 
-    const serializedCalls: ToolCallRecord[] = planningStep.rawToolCalls.map(
+    let serializedCalls: ToolCallRecord[] = planningStep.rawToolCalls.map(
       (toolCall) => ({
         id: toolCall.id,
         name: toolCall.function.name,
         arguments: parseToolArguments(toolCall.function.arguments),
       }),
     );
+
+    const truncatedToolCalls =
+      serializedCalls.length > policy.maxToolCallsPerIteration;
+    if (truncatedToolCalls) {
+      serializedCalls = serializedCalls.slice(0, policy.maxToolCallsPerIteration);
+    }
 
     if (serializedCalls.length === 0) {
       if (!usedTool && stepIndex === 0 && shouldFallbackToHeuristic) {
@@ -290,6 +300,7 @@ export async function prepareToolContext(params: {
               payload: {
                 fallbackReason: "model-did-not-emit-tool-call",
                 toolName: fallbackIntent.toolName,
+                policy: getPolicySnapshot(policy),
               },
             }),
           );
@@ -298,6 +309,7 @@ export async function prepareToolContext(params: {
             input,
             startedAt,
             messages,
+            policy,
             persistedMessages,
             agentSteps,
             preludeEvents,
@@ -306,6 +318,7 @@ export async function prepareToolContext(params: {
               directToolIntent: true,
               fallbackReason: "model-did-not-emit-tool-call",
               planningUsage: planningStep.planning.usage ?? null,
+              runtimePolicy: getPolicySnapshot(policy),
             },
           });
           continue;
@@ -317,22 +330,24 @@ export async function prepareToolContext(params: {
           input,
           index: stepIndex,
           label: usedTool
-            ? "工具观察已完成，Agent 决定停止继续调用工具并生成最终答复。"
+            ? "工具观察已经完成，Agent 决定停止继续调用工具并生成最终答复。"
             : "Agent 决定直接生成最终答复，不再调用工具。",
           payload: {
             modelResponse: planningStep.assistantText || null,
             toolCalls: 0,
             heuristicFallbackEnabled: policy.heuristicFallbackEnabled,
+            policy: getPolicySnapshot(policy),
           },
         }),
       );
 
-      if (planningStep.assistantText) {
+      if (planningStep.assistantText && policy.persistPlanningMessages) {
         persistedMessages.push({
           role: "assistant",
           content: planningStep.assistantText,
           metadata: buildDebugMetadata(input, {
             modelPlanningNote: true,
+            runtimePolicy: getPolicySnapshot(policy),
             ...planningStep.metadata,
           }),
         });
@@ -352,10 +367,14 @@ export async function prepareToolContext(params: {
 
     persistedMessages.push({
       role: "assistant",
-      content: planningStep.assistantText || "模型决定继续调用工具处理这一轮请求。",
+      content:
+        planningStep.assistantText ||
+        "模型决定继续调用工具处理这一轮请求。",
       toolCalls: serializedCalls,
       metadata: buildDebugMetadata(input, {
         modelToolCall: true,
+        runtimePolicy: getPolicySnapshot(policy),
+        truncatedToolCalls,
         ...planningStep.metadata,
       }),
     });
@@ -368,19 +387,20 @@ export async function prepareToolContext(params: {
           toolNames: serializedCalls.map((toolCall) => toolCall.name),
           toolCalls: serializedCalls.length,
           modelResponse: planningStep.assistantText || null,
-          maxToolSteps: policy.maxToolSteps,
+          truncatedToolCalls,
+          policy: getPolicySnapshot(policy),
         },
       }),
     );
 
     messages.push({
       role: "assistant",
-      tool_calls: planningStep.rawToolCalls.map((toolCall) => ({
+      tool_calls: serializedCalls.map((toolCall) => ({
         id: toolCall.id,
         type: "function",
         function: {
-          name: toolCall.function.name,
-          arguments: toolCall.function.arguments,
+          name: toolCall.name,
+          arguments: JSON.stringify(toolCall.arguments),
         },
       })),
     });
@@ -390,6 +410,7 @@ export async function prepareToolContext(params: {
         input,
         startedAt,
         messages,
+        policy,
         persistedMessages,
         agentSteps,
         preludeEvents,
@@ -406,10 +427,10 @@ export async function prepareToolContext(params: {
   agentSteps.push(
     createPlanningStep({
       input,
-      index: policy.maxToolSteps,
-      label: `达到最大工具规划轮数 ${policy.maxToolSteps}，Agent 停止继续规划并进入最终答复阶段。`,
+      index: policy.maxPlanningIterations,
+      label: `达到最大规划轮数 ${policy.maxPlanningIterations}，Agent 停止继续规划并进入最终答复阶段。`,
       payload: {
-        maxToolSteps: policy.maxToolSteps,
+        policy: getPolicySnapshot(policy),
       },
       status: "failed",
     }),
@@ -417,9 +438,10 @@ export async function prepareToolContext(params: {
 
   persistedMessages.push({
     role: "assistant",
-    content: `本轮最多只允许执行 ${policy.maxToolSteps} 轮工具规划，系统已停止继续调用工具。`,
+    content: `本轮最多只允许执行 ${policy.maxPlanningIterations} 轮工具规划，系统已停止继续调用工具。`,
     metadata: buildDebugMetadata(input, {
-      maxToolStepsReached: true,
+      maxPlanningIterationsReached: true,
+      runtimePolicy: getPolicySnapshot(policy),
       ...buildBaseMetadata(input, Date.now() - startedAt),
     }),
   });

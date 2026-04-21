@@ -41,8 +41,10 @@ export async function addKnowledgeEntry(input: KnowledgeEntryInput) {
 
 export async function handleChatTurn(sessionId: string, content: string) {
   const turnId = createId("turn");
+  const traceId = createId("trace");
   const updatedSession = await saveUserMessage(sessionId, content, {
     turnId,
+    traceId,
     visibility: "visible",
   });
 
@@ -63,6 +65,7 @@ export async function handleChatTurn(sessionId: string, content: string) {
     temperature: latestSession.temperature,
     maxOutputTokens: latestSession.maxOutputTokens,
     turnId,
+    traceId,
     messages: contextWindow.messages,
     context: {
       totalMessages: contextWindow.totalMessages,
@@ -73,6 +76,7 @@ export async function handleChatTurn(sessionId: string, content: string) {
   });
 
   return {
+    traceId,
     stream: turn.stream,
     initialStage: turn.initialStage,
     preludeEvents: turn.preludeEvents ?? [],

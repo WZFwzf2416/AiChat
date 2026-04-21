@@ -17,6 +17,8 @@ import {
 import {
   buildBaseMetadata,
   buildOpenAIMessages,
+  DEFAULT_AGENT_RUNTIME_POLICY,
+  getPolicySnapshot,
   type CompatibleTarget,
   type GenerateTurnInput,
   type StreamedTurnResult,
@@ -68,6 +70,7 @@ async function generateWithCompatibleProvider(
     throw new Error(target.error);
   }
 
+  const policy = DEFAULT_AGENT_RUNTIME_POLICY;
   const startedAt = Date.now();
   const client = new OpenAI({
     apiKey: target.apiKey,
@@ -79,6 +82,7 @@ async function generateWithCompatibleProvider(
     input,
     startedAt,
     messages: buildOpenAIMessages(input.systemPrompt, input.messages),
+    policy,
   });
 
   const streamed = await streamAssistantCompletion({
@@ -86,12 +90,14 @@ async function generateWithCompatibleProvider(
     targetLabel: target.label,
     input,
     startedAt,
+    policy,
     messages: prepared.messages,
     persistedMessages: prepared.persistedMessages,
     agentSteps: prepared.agentSteps,
   });
 
   return {
+    traceId: input.traceId,
     ...streamed,
     initialStage: prepared.initialStage,
     preludeEvents: prepared.preludeEvents,
@@ -102,7 +108,11 @@ async function generateWithMockProvider(
   input: GenerateTurnInput,
   reason?: string,
 ): Promise<StreamedTurnResult> {
-  const baseMetadata = buildBaseMetadata(input, 0);
+  const policy = DEFAULT_AGENT_RUNTIME_POLICY;
+  const baseMetadata = {
+    ...buildBaseMetadata(input, 0),
+    runtimePolicy: getPolicySnapshot(policy),
+  };
   const latestUserMessage = [...input.messages]
     .reverse()
     .find((message) => message.role === "user");
@@ -113,8 +123,13 @@ async function generateWithMockProvider(
       input,
       startedAt: Date.now(),
       messages: [],
+      policy,
       intent: directToolIntent,
-      metadataExtras: { directToolIntent: true, providerMode: "mock" },
+      metadataExtras: {
+        directToolIntent: true,
+        providerMode: "mock",
+        runtimePolicy: getPolicySnapshot(policy),
+      },
     });
     const assistantText = [
       `当前处于演示模式，但工具仍然执行了真实请求：${directToolIntent.toolName}。`,
@@ -131,6 +146,7 @@ async function generateWithMockProvider(
     };
 
     return {
+      traceId: input.traceId,
       stream: createBufferedTextStream(assistantText),
       initialStage: "tooling",
       preludeEvents: executionContext.preludeEvents,
@@ -165,6 +181,7 @@ async function generateWithMockProvider(
   };
 
   return {
+    traceId: input.traceId,
     stream: createBufferedTextStream(assistantText),
     initialStage: "thinking",
     completion: Promise.resolve({

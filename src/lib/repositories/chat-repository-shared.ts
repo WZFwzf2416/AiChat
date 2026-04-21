@@ -1,4 +1,8 @@
-import { hasCompatibleApiKey, isDevelopment, preferredCompatibleBackend } from "@/lib/env";
+import {
+  hasCompatibleApiKey,
+  isDevelopment,
+  preferredCompatibleBackend,
+} from "@/lib/env";
 import {
   DEFAULT_SYSTEM_PROMPT,
   getAvailableModelConfigs,
@@ -107,7 +111,7 @@ export function createStarterSession(
         id: createId("msg"),
         role: "assistant",
         content:
-          "欢迎来到你的 AI Chat 工作台。这里保留了真实聊天、工具调用和 Agent 轨迹的完整链路，你可以一边试，一边理解产品和代码是怎么连起来的。",
+          "欢迎来到你的 AI Chat 工作台。这里保留了真实聊天、工具调用和 Agent 轨迹的完整链路，你可以一边尝试，一边理解产品和代码是怎么连起来的。",
         createdAt: now,
         metadata: { seed: true, visibility: "visible" },
       },
