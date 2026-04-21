@@ -37,6 +37,8 @@
 - `npm run build`
 - `docker compose -f docker-compose.prod.yml config`
 - `docker build --target runner -t chat-app:test .` 未执行完成：本机 Docker daemon 未启动
+- `.gitignore` 修正后，`git status --short` 已确认 `.env.example` 与 `.env.production.example` 可被跟踪
+- 再次执行：`npm run lint`
 - 文档更新后再次执行：
   - `npm run lint`
   - `npm run build`
@@ -71,6 +73,7 @@
   - 关闭 `poweredByHeader`
   - 为反向代理流式响应增加 `X-Accel-Buffering: no`
 - 新增 `src/app/api/health/route.ts` 作为容器健康检查入口。
+- 修正 `.gitignore`，允许提交 `.env.example` 与 `.env.production.example` 这类示例环境文件。
 
 ### 验证
 
@@ -85,6 +88,7 @@
 - `lint` 与 `build` 已通过，`/api/health` 已进入构建产物。
 - `docker compose` 生产编排已完成结构解析校验。
 - 本地未能完成真实镜像构建校验，原因是当前环境没有可用的 Docker daemon。
+- 示例环境文件已可正常进入 Git 跟踪。
 
 ### 下一步或风险
 
