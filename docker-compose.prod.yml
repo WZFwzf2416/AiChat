@@ -1,0 +1,56 @@
+services:
+  app:
+    image: chat-app:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+    expose:
+      - "3000"
+    volumes:
+      - next-cache:/app/.next/cache
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  migrate:
+    image: chat-tools:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: tools
+    profiles:
+      - tools
+    env_file:
+      - .env.production
+    command: ["npx", "prisma", "db", "push"]
+
+volumes:
+  next-cache:
