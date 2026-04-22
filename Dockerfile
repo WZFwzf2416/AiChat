@@ -5,7 +5,7 @@ WORKDIR /app
 
 FROM base AS deps
 
-ARG DATABASE_URL
+ARG DATABASE_URL=postgresql://placeholder:placeholder@127.0.0.1:5432/placeholder
 ENV DATABASE_URL=$DATABASE_URL
 
 COPY package.json package-lock.json ./
