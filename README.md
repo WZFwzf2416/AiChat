@@ -4,10 +4,10 @@
 
 ## 当前状态
 
-- 已具备真实聊天工作流：会话、消息、模型配置、知识库、工具调用、SSE 流式输出。
-- 已具备单 Agent 循环基础：`planning -> tooling -> planning -> finalizing`。
-- 已具备企业级底座元素：`turnId`、`traceId`、runtime policy、结构化工具结果、Inspector 调试面板。
-- 当前阶段优先做清理、稳定性和治理能力，不再盲目堆新功能。
+- 已具备真实聊天工作流：会话、消息、模型配置、知识库、工具调用、SSE 流式输出
+- 已具备单 Agent 循环基础：`planning -> tooling -> planning -> finalizing`
+- 已具备企业级底座元素：`turnId`、`traceId`、runtime policy、结构化工具结果、Inspector 调试面板
+- 当前阶段优先做清理、稳定性和治理能力，不再盲目堆新功能
 
 ## 技术栈
 
@@ -85,10 +85,10 @@ npm run dev
 
 ## 环境说明
 
-- 配置了真实模型 key 时，默认进入 `real` 模式。
-- 没有真实模型 key 时，会进入 `demo` 模式兜底。
-- 没有 `DATABASE_URL` 时，会回退到内存模式，但仅推荐用于开发环境。
-- 通义千问通过 DashScope 的 OpenAI Compatible 接口接入。
+- 配置了真实模型 key 时，默认进入 `real` 模式
+- 没有真实模型 key 时，会进入 `demo` 模式兜底
+- 没有 `DATABASE_URL` 时，会回退到内存模式，但仅推荐用于开发环境
+- 通义千问通过 DashScope 的 OpenAI Compatible 接口接入
 
 ## 工程规则
 
@@ -97,6 +97,9 @@ npm run dev
 - 默认中文文案
 - 页面组件负责 UI，编排逻辑放 service 层，模型适配放 provider/runtime 层，存储访问放 repository 层
 - 长内容必须待在局部滚动容器内
+- 默认优先做小组件、小模块拆分，避免把新逻辑继续堆进单个大文件
+- 代码改动时要同时考虑后续扩展，尤其是聊天面板、Inspector、runtime、tooling 这些容易继续生长的区域
+- 如果一个文件开始承担多种职责，要在当前改动里顺手拆分，不把结构债留到后面
 
 ## 验证与记录要求
 
@@ -107,6 +110,12 @@ npm run dev
    - 涉及构建链路时执行 `npm run build`
 2. 将操作、结果、风险和下一步记录到工作日志
    - 统一记录在 [docs/worklog.md](/E:/代码/ai项目/chat/docs/worklog.md)
+
+## 结构约定
+
+- 新增 UI 能力时，优先抽出独立组件，而不是继续扩展已有巨型组件
+- 新增 runtime / service / repository 逻辑时，优先按职责落到对应层，不把流程全塞进入口文件
+- 当文件变得难以阅读或难以复用时，应在本次修改中直接拆分，而不是留到以后再处理
 
 ## 相关文档
 

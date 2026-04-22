@@ -26,6 +26,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Keep orchestration in service-layer modules.
 - Keep model/provider adaptation in provider-layer modules.
 - Keep storage access in repository-layer modules.
+- Prefer small, composable components and modules over large all-in-one files.
+- When adding code, consider extensibility up front so new states, tools, and panels can be added without rewriting the original file.
+- If a file starts mixing multiple responsibilities, split it during the change instead of postponing the cleanup.
+- Avoid repeating the pattern of letting one file grow too large and then paying the refactor cost later.
 
 ## Encoding Rules
 - Treat source files as `UTF-8` only.
@@ -38,3 +42,4 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Default verification should include `npm run lint`.
 - When the change may affect build, routing, module resolution, or types, also run `npm run build`.
 - Record operations, verification results, and next steps in `docs/worklog.md` after each code change.
+- Worklog entries should also note structural decisions when a change involves component extraction, module boundaries, or extensibility tradeoffs.
