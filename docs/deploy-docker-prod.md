@@ -145,3 +145,54 @@ docker compose -f docker-compose.prod.yml up -d --build
 - 接入镜像仓库和 CI/CD
 - 把 `docker compose up -d --build` 升级成 `pull + up -d`
 - 后续如需多实例，再补共享缓存和部署版本管理
+
+## GitHub Actions 自动部署
+
+仓库已经提供：
+
+- [deploy/deploy-prod.sh](/E:/代码/ai项目/chat/deploy/deploy-prod.sh)：服务器上的部署脚本
+- [.github/workflows/deploy-prod.yml](/E:/代码/ai项目/chat/.github/workflows/deploy-prod.yml)：推送到 `master` 后自动通过 SSH 执行部署
+
+### 服务器准备
+
+先在服务器上确保脚本可执行：
+
+```bash
+cd /srv/aichat
+chmod +x deploy/deploy-prod.sh
+```
+
+### GitHub Secrets
+
+在仓库的 `Settings -> Secrets and variables -> Actions` 中添加：
+
+- `SSH_HOST`：服务器 IP，例如 `114.132.124.103`
+- `SSH_PORT`：可选，默认 `22`
+- `SSH_USER`：服务器登录用户，例如 `ubuntu`
+- `SSH_PRIVATE_KEY`：用于登录服务器的私钥内容
+- `DEPLOY_PATH`：可选，默认 `/srv/aichat`
+- `DEPLOY_BRANCH`：可选，默认 `master`
+
+### 工作流行为
+
+每次推送到 `master` 后，工作流会在服务器执行：
+
+1. `git fetch`
+2. `git pull --ff-only`
+3. 载入 `.env.production`
+4. `docker-compose -f docker-compose.prod.yml run --rm migrate`
+5. `docker-compose -f docker-compose.prod.yml up -d --build`
+
+如果服务器工作区有未提交改动，脚本会直接失败，避免自动部署覆盖临时文件。
+
+### 查看自动部署结果
+
+- GitHub Actions 页面查看工作流日志
+- 服务器上查看：
+
+```bash
+docker-compose -f docker-compose.prod.yml ps
+docker-compose -f docker-compose.prod.yml logs --tail=200 app
+docker-compose -f docker-compose.prod.yml logs --tail=200 proxy
+curl http://127.0.0.1/api/health
+```

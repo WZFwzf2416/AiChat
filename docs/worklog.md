@@ -70,6 +70,9 @@
 - 为 `Dockerfile` 的 `DATABASE_URL` 增加默认占位值，避免老版 `docker-compose` 未传递 build args 时阻塞 `prisma generate`。
 - 移除 `tools` 阶段构建时的 `prisma generate`，改为 `migrate` 容器启动后再执行，避免老版 `docker-compose` 在 build 阶段缺失真实环境变量时失败。
 - 将反向代理从 Nginx 切换为 Caddy，启用 `chat.crushzone.icu` 的自动 HTTPS，并将 `www.chat.crushzone.icu` 重定向到主域名。
+- 新增 GitHub Actions 自动部署：
+  - `.github/workflows/deploy-prod.yml`
+  - `deploy/deploy-prod.sh`
 
 ### 验证
 
@@ -77,6 +80,7 @@
 - `npm run build`
 - `docker compose -f docker-compose.prod.yml config`
 - `.gitignore` 修正后，`git status --short` 已确认 `.env.example` 与 `.env.production.example` 可被跟踪
+- `npm run lint`
 - `npm run lint`
 - `npm run lint`
 
@@ -91,9 +95,11 @@
 - 即使老版 `docker-compose` 不传递 build args，构建阶段也不会再因为缺少 `DATABASE_URL` 中断。
 - `migrate` 服务不再依赖构建阶段可用的数据库环境变量，改为运行时用 `.env.production` 里的真实连接串执行 Prisma。
 - 生产编排现已默认使用 Caddy 自动管理 HTTPS 证书。
+- 仓库已具备基于 GitHub Actions + SSH 的自动部署能力。
 
 ### 下一步或风险
 
 - 仍需根据你的真实服务器信息填写 `.env.production`。
 - 需要先确保 `chat.crushzone.icu` 与 `www.chat.crushzone.icu` 的 DNS 解析和腾讯云安全组 `80/443` 已正确放行，Caddy 才能成功签发证书。
 - 服务器执行前仍需要 `set -a; source .env.production; set +a`，让 `build.args` 能拿到 `DATABASE_URL`。
+- 需要在 GitHub 仓库里配置 `SSH_*` 和部署路径相关 Secrets，自动部署工作流才会生效。
