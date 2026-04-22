@@ -14,7 +14,6 @@ RUN npm ci
 FROM deps AS tools
 
 COPY . .
-RUN npm run prisma:generate
 
 FROM deps AS builder
 

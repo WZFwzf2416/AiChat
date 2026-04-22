@@ -52,7 +52,7 @@ services:
         DATABASE_URL: ${DATABASE_URL}
     env_file:
       - .env.production
-    command: ["npx", "prisma", "db", "push"]
+    command: ["sh", "-c", "npm run prisma:generate && npx prisma db push"]
 
 volumes:
   next-cache:

@@ -68,6 +68,7 @@
 - 修正 `.gitignore`，允许提交 `.env.example` 与 `.env.production.example` 这类示例环境文件。
 - 为 Docker 构建阶段补充 `DATABASE_URL` build args，并去掉 `migrate` 服务的 `profiles` 依赖，兼容老版 `docker-compose`。
 - 为 `Dockerfile` 的 `DATABASE_URL` 增加默认占位值，避免老版 `docker-compose` 未传递 build args 时阻塞 `prisma generate`。
+- 移除 `tools` 阶段构建时的 `prisma generate`，改为 `migrate` 容器启动后再执行，避免老版 `docker-compose` 在 build 阶段缺失真实环境变量时失败。
 
 ### 验证
 
@@ -75,6 +76,7 @@
 - `npm run build`
 - `docker compose -f docker-compose.prod.yml config`
 - `.gitignore` 修正后，`git status --short` 已确认 `.env.example` 与 `.env.production.example` 可被跟踪
+- `npm run lint`
 - `npm run lint`
 
 ### 当前结果
@@ -86,6 +88,7 @@
 - 示例环境文件已可正常进入 Git 跟踪。
 - 生产编排现在兼容 `docker-compose`，并能在构建阶段为 Prisma 提供 `DATABASE_URL`。
 - 即使老版 `docker-compose` 不传递 build args，构建阶段也不会再因为缺少 `DATABASE_URL` 中断。
+- `migrate` 服务不再依赖构建阶段可用的数据库环境变量，改为运行时用 `.env.production` 里的真实连接串执行 Prisma。
 
 ### 下一步或风险
 
