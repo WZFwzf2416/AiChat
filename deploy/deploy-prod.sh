@@ -32,6 +32,6 @@ source .env.production
 set +a
 
 docker-compose -f "$COMPOSE_FILE" run --rm migrate
-docker-compose -f "$COMPOSE_FILE" up -d --build
+docker-compose -f "$COMPOSE_FILE" up -d --build app proxy
 
 docker-compose -f "$COMPOSE_FILE" ps

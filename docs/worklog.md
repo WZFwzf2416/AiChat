@@ -73,6 +73,8 @@
 - 新增 GitHub Actions 自动部署：
   - `.github/workflows/deploy-prod.yml`
   - `deploy/deploy-prod.sh`
+- 调整部署脚本与文档，避免 `migrate` 服务在发布后常驻运行，只在部署时作为一次性任务执行。
+- 补充 `chat.crushzone.icu` / `www.chat.crushzone.icu` 的 HTTPS 验证步骤。
 
 ### 验证
 
@@ -80,6 +82,7 @@
 - `npm run build`
 - `docker compose -f docker-compose.prod.yml config`
 - `.gitignore` 修正后，`git status --short` 已确认 `.env.example` 与 `.env.production.example` 可被跟踪
+- `npm run lint`
 - `npm run lint`
 - `npm run lint`
 - `npm run lint`
@@ -96,6 +99,7 @@
 - `migrate` 服务不再依赖构建阶段可用的数据库环境变量，改为运行时用 `.env.production` 里的真实连接串执行 Prisma。
 - 生产编排现已默认使用 Caddy 自动管理 HTTPS 证书。
 - 仓库已具备基于 GitHub Actions + SSH 的自动部署能力。
+- 自动部署完成后不会再把 `migrate` 容器作为长期服务拉起。
 
 ### 下一步或风险
 

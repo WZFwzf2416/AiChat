@@ -65,7 +65,7 @@ docker compose -f docker-compose.prod.yml --profile tools run --rm migrate
 4. 启动生产服务
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d --build app proxy
 ```
 
 5. 检查运行状态
@@ -97,7 +97,7 @@ docker compose -f docker-compose.prod.yml --profile tools run --rm migrate
 3. 重建并重启服务
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d --build app proxy
 ```
 
 4. 验证健康检查
@@ -110,7 +110,7 @@ curl http://127.0.0.1/api/health
 
 ```bash
 docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml up -d app proxy
 ```
 
 这样更新会更快。
@@ -196,3 +196,34 @@ docker-compose -f docker-compose.prod.yml logs --tail=200 app
 docker-compose -f docker-compose.prod.yml logs --tail=200 proxy
 curl http://127.0.0.1/api/health
 ```
+
+## HTTPS 验证
+
+当 `chat.crushzone.icu` 与 `www.chat.crushzone.icu` 的 DNS 已经生效，且腾讯云安全组放行 `80/443` 后，可以这样验证：
+
+1. 本地检查解析：
+
+```bash
+nslookup chat.crushzone.icu
+nslookup www.chat.crushzone.icu
+```
+
+2. 服务器查看 Caddy 日志：
+
+```bash
+docker-compose -f docker-compose.prod.yml logs --tail=200 proxy
+```
+
+3. 本地检查 HTTPS：
+
+```bash
+curl -I http://chat.crushzone.icu
+curl -I https://chat.crushzone.icu
+curl -I https://www.chat.crushzone.icu
+```
+
+理想结果：
+
+- `http://chat.crushzone.icu` 返回 `301/308` 并跳到 `https://chat.crushzone.icu`
+- `https://chat.crushzone.icu` 返回 `200`
+- `https://www.chat.crushzone.icu` 重定向到 `https://chat.crushzone.icu`
