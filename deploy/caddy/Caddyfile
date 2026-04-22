@@ -1,0 +1,9 @@
+www.chat.crushzone.icu {
+  redir https://chat.crushzone.icu{uri} permanent
+}
+
+chat.crushzone.icu {
+  encode gzip zstd
+
+  reverse_proxy app:3000
+}

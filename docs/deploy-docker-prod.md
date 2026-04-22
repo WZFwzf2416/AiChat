@@ -3,7 +3,7 @@
 这套方案对应当前项目的首选部署方式：
 
 - 应用使用 Docker 容器运行
-- 反向代理使用 Nginx 容器
+- 反向代理使用 Caddy 容器
 - 数据库使用外部托管 PostgreSQL
 - 首次上线和后续更新都走 `docker compose`
 
@@ -11,7 +11,7 @@
 
 - [Dockerfile](/E:/代码/ai项目/chat/Dockerfile)：多阶段构建，生产环境使用 Next.js `standalone` 输出
 - [docker-compose.prod.yml](/E:/代码/ai项目/chat/docker-compose.prod.yml)：生产编排
-- [deploy/nginx/nginx.conf](/E:/代码/ai项目/chat/deploy/nginx/nginx.conf)：Nginx 反向代理配置
+- [deploy/caddy/Caddyfile](/E:/代码/ai项目/chat/deploy/caddy/Caddyfile)：Caddy 自动 HTTPS 配置
 - [.env.production.example](/E:/代码/ai项目/chat/.env.production.example)：生产环境变量模板
 
 ## 服务器准备
@@ -29,6 +29,11 @@
 - `22`：SSH
 - `80`：HTTP
 - `443`：HTTPS
+
+同时确认 DNS 已经解析到服务器：
+
+- `chat.crushzone.icu -> A -> 114.132.124.103`
+- `www.chat.crushzone.icu -> CNAME -> chat.crushzone.icu`
 
 ## 首次上线
 
@@ -112,14 +117,18 @@ docker compose -f docker-compose.prod.yml up -d
 
 ## 反向代理说明
 
-当前 Nginx 配置已经做了这些处理：
+当前 Caddy 配置已经做了这些处理：
 
+- 自动为 `chat.crushzone.icu` 申请和续期 HTTPS 证书
+- 将 `www.chat.crushzone.icu` 永久重定向到 `chat.crushzone.icu`
 - 反向代理到应用容器 `app:3000`
-- 关闭代理缓冲，兼容流式响应
-- 透传 `Host` 和转发 IP 头
-- 预留 WebSocket/升级连接支持
+- 启用 gzip / zstd 压缩
 
-如果你要直接在服务器上终止 HTTPS，可以继续扩展这份 Nginx 配置并挂载证书。
+如果你后续要切换域名，只需要更新 [deploy/caddy/Caddyfile](/E:/代码/ai项目/chat/deploy/caddy/Caddyfile) 里的站点域名，再重新执行：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
 
 ## 健康检查
 
@@ -133,7 +142,6 @@ docker compose -f docker-compose.prod.yml up -d
 
 ## 建议的下一步
 
-- 给服务器接上 HTTPS
 - 接入镜像仓库和 CI/CD
 - 把 `docker compose up -d --build` 升级成 `pull + up -d`
 - 后续如需多实例，再补共享缓存和部署版本管理
