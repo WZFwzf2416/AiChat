@@ -15,7 +15,7 @@ export const CHAT_COPY = {
   sendMessageError: "发送消息失败，请稍后重试。",
   sessionRecoveryError:
     "当前会话已失效，系统已尝试重新同步，请刷新页面后再发送一次。",
-  appEyebrow: "AI 实战工作台",
+  appEyebrow: "AI 实战工作台DEMO",
   appTitle: "从 Chat 到 Agent 的练习场",
   newSession: "新建",
   runtimeTitle: "运行状态",
