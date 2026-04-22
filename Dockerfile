@@ -5,6 +5,9 @@ WORKDIR /app
 
 FROM base AS deps
 
+ARG DATABASE_URL
+ENV DATABASE_URL=$DATABASE_URL
+
 COPY package.json package-lock.json ./
 RUN npm ci
 

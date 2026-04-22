@@ -5,6 +5,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runner
+      args:
+        DATABASE_URL: ${DATABASE_URL}
     restart: unless-stopped
     env_file:
       - .env.production
@@ -46,8 +48,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: tools
-    profiles:
-      - tools
+      args:
+        DATABASE_URL: ${DATABASE_URL}
     env_file:
       - .env.production
     command: ["npx", "prisma", "db", "push"]
